@@ -14,6 +14,34 @@
 
 -->
 
+# NEXT
+
+## Release Notes
+
+The `nginz` chart now configures nginx to only allow cross-origin requests from
+an epxlicit allow list of sub-domains. By default these are:
+
+```yaml
+nginz:
+  nginx_conf:
+    allowlisted_origins:
+    - webapp
+    - teams
+    - accounts
+```
+
+If you changed the names of these services you have to adjust those names in the nginz config as well!
+
+## Features
+
+## Bug fixes and other updates
+
+* There is now an explicit CORS allowlist for _all_ endpoints.  Even subdomains need to be listed explicitly (whilst before all subdomains were accepted). This is technically a breaking change as now only javascript applications that are known can access the backend.
+
+## Documentation
+
+## Internal changes
+
 # 2021-06-23
 
 ## API Changes
