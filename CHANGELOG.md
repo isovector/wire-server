@@ -18,8 +18,8 @@
 
 ## Release Notes
 
-The `nginz` chart now configures nginx to only allow cross-origin requests from
-an epxlicit allow list of sub-domains. By default these are:
+The `nginz` chart now configures nginx to only allow cross-origin requests from an 
+epxlicit allow list of sub-domains. By default these are:
 
 ```yaml
 nginz:
