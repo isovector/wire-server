@@ -189,7 +189,7 @@ An error in this category indicates an issue with configuration of federation on
 Errors in this category are returned in case of communication issues between the local backend and a remote one, or if the remote side encountered an error while processing an RPC.
 
  - **RPC error with code** (status: 533, label: `grpc-error-code`): An RPC to a remote federator resulted in an error. The RPC error code can be found in the error message.
- - **RPC error with code** (status: 533, label: `grpc-error-string`): An RPC to a remote federator resulted in an error. A description of the error can be found in the error message.
+ - **RPC error with string** (status: 533, label: `grpc-error-string`): An RPC to a remote federator resulted in an error. A description of the error can be found in the error message.
  - **RPC error** (status: 500, label: `federation-rpc-error`): There was a non-specified error in the RPC from this backend to another backend. Check the error message for more details.
  - **Connection refused** (status: 521, label: `cannot-connect-to-remote-federator`): The local federator could not connect to a remote one.
  - **Too much concurrency** (status: 533, label: `too-much-concurrency`): Too many concurrent requests on a remote backend.
