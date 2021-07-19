@@ -35,7 +35,8 @@
 
 ## Documentation
 
-*  fix swagger: mark name in UserUpdate as optional (#1691)
+* fix swagger: mark name in UserUpdate as optional (#1691)
+* Added documentation of federation errors (#1674)
 
 ## Internal changes
 
@@ -90,7 +91,6 @@ Upgrade nginz (#1658)
 * Added a `QualifiedCapture` type to Servant for qualified paths (#1669)
 * Renamed `DomainHeader` type to `OriginDomainHeader` (#1689)
 * Added golden tests for protobuf serialisation / deserialisation (#1644).
-
 
 # [2021-07-09]
 
