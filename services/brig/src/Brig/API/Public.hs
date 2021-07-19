@@ -182,7 +182,7 @@ An error in this category indicates an issue with configuration of federation on
  - **Federation not implemented** (status: 403, label: `federation-not-implemented`): Federated behaviour for a certain endpoint is not yet implemented.
  - **Remote backend not found** (status: 422, label: `srv-record-not-found`): This backend attempted to contact a backend which does not exist or is not properly configured.
  - **Federation denied locally** (status: 400, label: `federation-not-allowed`): This backend attempted an RPC to a non-whitelisted backend.
- - **Federator discovery failed** (status: 500, label: `srv-lookup-dns-error`): A DNS occurred during discovery of a remote backend.
+ - **Federator discovery failed** (status: 500, label: `srv-lookup-dns-error`): A DNS error occurred during discovery of a remote backend.
 
 ### Remote federation errors
 
