@@ -25,10 +25,11 @@ import Data.Handle
 import Data.LegalHold (UserLegalHoldStatus (UserLegalHoldNoConsent))
 import Data.String.Conversions (cs)
 import Federator.Options
-import Federator.Remote (mkGrpcClient)
+import Federator.Remote (RemoteError, mkGrpcClient)
 import Imports
 import Mu.GRpc.Client.TyApps
 import qualified Polysemy
+import qualified Polysemy.Error as Polysemy
 import qualified Polysemy.Reader as Polysemy
 import Polysemy.TinyLog (discardLogs)
 import Test.Federator.Util
@@ -60,7 +61,14 @@ inwardBrigCallViaIngress requestPath payload = do
   let target = SrvTarget (cs ingressHost) ingressPort
   runSettings <- optSettings . view teOpts <$> ask
   tlsSettings <- view teTLSSettings
-  c <- liftIO . Polysemy.runM . discardLogs . Polysemy.runReader tlsSettings . Polysemy.runReader runSettings $ mkGrpcClient target
+  c <-
+    liftIO
+      . Polysemy.runM
+      . Polysemy.runError @RemoteError
+      . discardLogs
+      . Polysemy.runReader tlsSettings
+      . Polysemy.runReader runSettings
+      $ mkGrpcClient target
   client <- case c of
     Left clientErr -> liftIO $ assertFailure (show clientErr)
     Right cli -> pure cli
