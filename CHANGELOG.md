@@ -67,6 +67,7 @@ Upgrade nginz (#1658)
 * Added a `QualifiedCapture` type to Servant for qualified paths (#1669)
 * Removed explicit implementation for user HEAD endpoints (#1679)
 * Improved test coverage for error responses (#1680)
+* Refactored remote error handling in federator (#1681)
 
 ## Federation changes (alpha feature, do not use yet)
 
