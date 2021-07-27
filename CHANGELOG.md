@@ -19,7 +19,7 @@
 
 # [unreleased]
 
-[please put all changes that only affect federation into this section to unclutter the rest of the release notes.]
+[please put all changes that only affect federation into the "Federation changes" section to unclutter the rest of the release notes.]
 [if something is both an API change and a feature, please mention it twice (you can abbreviate the second mention and add "see above").]
 
 ## Release Notes
@@ -71,6 +71,7 @@ Upgrade nginz (#1658)
 
 ## Federation changes (alpha feature, do not use yet)
 
+* Added client certificate support for server to server authentication (#1682)
 
 # [2021-07-09]
 
