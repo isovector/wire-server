@@ -53,7 +53,7 @@ requestBrigSuccess =
       mockServiceCallReturns @IO (\_ _ _ _ -> pure (HTTP.ok200, Just "response body"))
       let request = Request Brig "/federation/get-user-by-handle" "\"foo\"" exampleDomain
 
-      res :: InwardResponse <- mock @Service @IO . TinyLog.discardLogs . Polysemy.runReader defRunSettings $ callLocal request
+      res :: InwardResponse <- mock @Service @IO . TinyLog.discardLogs . Polysemy.runReader defRunSettings $ callLocal Nothing request
       actualCalls <- mockServiceCallCalls @IO
       let expectedCall = (Brig, "federation/get-user-by-handle", "\"foo\"", aValidDomain)
       embed $ assertEqual "one call to brig should be made" [expectedCall] actualCalls
@@ -66,7 +66,7 @@ requestBrigFailure =
       mockServiceCallReturns @IO (\_ _ _ _ -> pure (HTTP.notFound404, Just "response body"))
       let request = Request Brig "/federation/get-user-by-handle" "\"foo\"" exampleDomain
 
-      res <- mock @Service @IO . TinyLog.discardLogs . Polysemy.runReader defRunSettings $ callLocal request
+      res <- mock @Service @IO . TinyLog.discardLogs . Polysemy.runReader defRunSettings $ callLocal Nothing request
 
       actualCalls <- mockServiceCallCalls @IO
       let expectedCall = (Brig, "federation/get-user-by-handle", "\"foo\"", aValidDomain)
@@ -82,7 +82,7 @@ requestGalleySuccess =
       mockServiceCallReturns @IO (\_ _ _ _ -> pure (HTTP.ok200, Just "response body"))
       let request = Request Galley "federation/get-conversations" "{}" exampleDomain
 
-      res :: InwardResponse <- mock @Service @IO . TinyLog.discardLogs . Polysemy.runReader defRunSettings $ callLocal request
+      res :: InwardResponse <- mock @Service @IO . TinyLog.discardLogs . Polysemy.runReader defRunSettings $ callLocal Nothing request
       actualCalls <- mockServiceCallCalls @IO
       let expectedCall = (Galley, "federation/get-conversations", "{}", aValidDomain)
       embed $ assertEqual "one call to brig should be made" [expectedCall] actualCalls
