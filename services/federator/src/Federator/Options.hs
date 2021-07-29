@@ -64,7 +64,9 @@ data RunSettings = RunSettings
     useSystemCAStore :: Bool,
     remoteCAStore :: Maybe FilePath,
     clientCertificate :: Maybe FilePath,
-    clientPrivateKey :: Maybe FilePath
+    clientPrivateKey :: Maybe FilePath,
+    dnsHost :: Maybe String,
+    dnsPort :: Maybe Word16
   }
   deriving (Eq, Show, Generic)
 

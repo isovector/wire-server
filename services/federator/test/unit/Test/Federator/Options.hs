@@ -44,7 +44,9 @@ defRunSettings =
       useSystemCAStore = True,
       remoteCAStore = Nothing,
       clientCertificate = Nothing,
-      clientPrivateKey = Nothing
+      clientPrivateKey = Nothing,
+      dnsHost = Nothing,
+      dnsPort = Nothing
     }
 
 tests :: TestTree
