@@ -45,6 +45,7 @@
 ## Federation changes
 
 * Added client certificate support for server to server authentication (#1682)
+* Implemented full server-to-server authentication (#1687)
 
 # [2021-08-02]
 
