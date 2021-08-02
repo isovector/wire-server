@@ -94,7 +94,6 @@ callInward client request =
 mkGrpcClient ::
   Members
     '[ Embed IO,
-       TinyLog,
        Polysemy.Error RemoteError,
        Polysemy.Reader TLSSettings
      ]

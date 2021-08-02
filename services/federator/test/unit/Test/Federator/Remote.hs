@@ -14,7 +14,6 @@ import qualified Network.Wai.Handler.WarpTLS as WarpTLS
 import Polysemy
 import qualified Polysemy.Error as Polysemy
 import qualified Polysemy.Reader as Polysemy
-import qualified Polysemy.TinyLog as TinyLog
 import Test.Federator.Options (defRunSettings)
 import Test.Tasty
 import Test.Tasty.HUnit
@@ -58,7 +57,6 @@ testValidatesCertificateSuccess =
           void
             . runM
             . assertNoError @RemoteError
-            . TinyLog.discardLogs
             . Polysemy.runReader tlsSettings
             $ mkGrpcClient (SrvTarget "localhost" (fromIntegral port)),
       testCase "when hostname=localhost. and certificate-for=localhost" $ do
@@ -71,7 +69,6 @@ testValidatesCertificateSuccess =
                 }
           void
             . runM
-            . TinyLog.discardLogs
             . assertNoError @RemoteError
             . Polysemy.runReader tlsSettings
             $ mkGrpcClient (SrvTarget "localhost." (fromIntegral port)),
@@ -86,7 +83,6 @@ testValidatesCertificateSuccess =
                 }
           eitherClient <-
             Polysemy.runM
-              . TinyLog.discardLogs
               . Polysemy.runError @RemoteError
               . Polysemy.runReader tlsSettings
               $ mkGrpcClient (SrvTarget "localhost." (fromIntegral port))
@@ -110,7 +106,6 @@ testValidatesCertificateWrongHostname =
           eitherClient <-
             Polysemy.runM
               . Polysemy.runError
-              . TinyLog.discardLogs
               . Polysemy.runReader tlsSettings
               $ mkGrpcClient (SrvTarget "localhost." (fromIntegral port))
           case eitherClient of
