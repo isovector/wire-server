@@ -12,27 +12,8 @@ import Polysemy.Internal.CustomErrors (FirstOrder)
 import Polysemy.Internal.Tactics (liftT, runTactics)
 import Polysemy.Internal.Union
 import Polysemy.State
-
-data Tty m a where
-  Read :: Tty m (Maybe String)
-  Write :: String -> Tty m ()
-
-makeSem ''Tty
-
-runTty :: [String] -> Sem (Tty ': r) a -> Sem r (([String], [String]), a)
-runTty ins a =
-  fmap (first $ second reverse) $
-    runState (ins, [] :: [String]) $
-      reinterpret
-        ( \case
-            Read -> do
-              r <- gets $ listToMaybe . fst
-              modify $ first $ drop 1
-              pure r
-            Write s -> do
-              modify $ second (s :)
-        )
-        a
+import Polysemy.Input (runInputConst, input, Input (Input))
+import Polysemy.Output (runOutputSem, output)
 
 replace ::
   ( Member e r,
@@ -84,8 +65,8 @@ unreplace (AlsoRunReplaced a) = a
 -- @@
 --
 -- we can call @runComposed . replace runB'@ to effectively change the
--- interpretation from @runB@ to @interpret runB'@ --- /including/ the actions
--- in @B@ that are visible to @A@.
+-- interpretation from @runB@ to @interpret runB'@ --- however, this /EXCLUDES/
+-- the actions in @B@ that are visible to @A@. Alas.
 --
 -- The @Replace@ type in the result allows replacing interpreters to choose
 -- whether the replaced interpreter should also be run. Sometimes this is
@@ -114,20 +95,14 @@ replaceH f (Sem m) = Sem $ \k -> m $ \u ->
         pure $ fmap unreplace z
     Nothing -> k $ hoist (replaceH f) u
 
-tryInIO :: Member (Embed IO) r => Tty (Sem r0) x -> Sem r (Replace x)
-tryInIO = \case
-  Read -> fmap Replace . embed $ fmap Just $ fmap ("IO: " ++) getLine
-  Write s -> fmap AlsoRunReplaced . embed $ putStrLn $ "(IO) " ++ s
+
 
 main :: IO ()
 main = (print =<<) $
   runM $
-    runTty ["hello", "world"] $
-      replace tryInIO $ do
-        read >>= \case
-          Nothing -> do
-            write "NO INPUT"
-            pure "bad"
-          Just s -> do
-            write s
-            pure @_ @String "ok"
+    runInputConst @String "original" $
+      runOutputSem (const $ input >>= embed . putStrLn) $ do
+        replace @(Input String) (\case Input -> pure $ Replace "replaced") $ do
+          output ()
+          output ()
+          output ()
