@@ -1,12 +1,16 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
-{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE NumDecimals         #-}
+{-# LANGUAGE TemplateHaskell     #-}
+
 {-# OPTIONS_GHC -fplugin=Polysemy.Plugin #-}
 
 module Polysemy.Prototype where
 
+import Control.Concurrent.MVar
 import Control.Arrow (first, second)
-import Imports hiding (read)
+import Imports hiding (tryTakeMVar, tryReadMVar, putMVar, read, intersperse)
 import Polysemy
+import Polysemy.Trace
 import Polysemy.Internal
 import Polysemy.Internal.CustomErrors (FirstOrder)
 import Polysemy.Internal.Tactics (liftT, runTactics)
@@ -14,6 +18,7 @@ import Polysemy.Internal.Union
 import Polysemy.State
 import Polysemy.Input (runInputConst, input, Input (Input))
 import Polysemy.Output (runOutputSem, output)
+import UnliftIO (async)
 
 replace ::
   ( Member e r,
@@ -97,12 +102,43 @@ replaceH f (Sem m) = Sem $ \k -> m $ \u ->
 
 
 
+------------------------------------------------------------------------------
+
+intersperse
+  :: Sem r () ->
+  Sem r a ->
+  Sem r a
+intersperse a (Sem m) =
+  Sem $ \k -> m $ \u -> do
+    usingSem k a
+    k u
+
+
+load :: (Member (Embed IO) r, Member Trace r) => MVar String -> Sem r ()
+load chan = do
+  embed (tryTakeMVar chan) >>= \case
+    Nothing -> pure ()
+    Just s -> do
+      trace $ "loaded: " <> s
+      load chan
+
+
+magic :: MVar String -> IO ()
+magic chan = do
+  putMVar chan "hello"
+  putMVar chan "world"
+  putMVar chan "zoup"
+
+
+
 main :: IO ()
-main = (print =<<) $
+main = do
+  chan <- Control.Concurrent.MVar.newEmptyMVar @String
+  _ <- async $ magic chan
   runM $
-    runInputConst @String "original" $
-      runOutputSem (const $ input >>= embed . putStrLn) $ do
-        replace @(Input String) (\case Input -> pure $ Replace "replaced") $ do
-          output ()
-          output ()
-          output ()
+    traceToStdout $
+      intersperse (load chan) $ do
+        trace "1"
+        trace "2"
+        trace "3"
+        trace "4"
