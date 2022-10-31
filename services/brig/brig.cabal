@@ -74,6 +74,7 @@ library
     Brig.Effects.ServiceRPC
     Brig.Effects.ServiceRPC.IO
     Brig.Effects.SFT
+    Brig.Effects.StompListener
     Brig.Effects.UserPendingActivationStore
     Brig.Effects.UserPendingActivationStore.Cassandra
     Brig.Email
