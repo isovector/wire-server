@@ -99,15 +99,12 @@ getConnections ::
   Maybe Relation ->
   App [ConnectionStatusV2]
 getConnections [] _ _ = pure []
-getConnections uFrom uTo rlt = do
-  r <-
-    call Brig $
-      method POST
-        . path "/i/users/connections-status/v2"
-        . json (ConnectionsStatusRequestV2 uFrom uTo rlt)
-        . expect2xx
-  parseResponse (mkError status502 "server-error") r
+getConnections uFrom uTo rlt =
+  runAPICall $
+    Galley.Intra.Machinery.rpcClient @'BrigInternal @"get-all-connections"
+      $ ConnectionsStatusRequestV2 uFrom uTo rlt
 
+-- TODO(sandy): not ported to servant
 putConnectionInternal ::
   UpdateConnectionsInternal ->
   App Status
@@ -119,6 +116,7 @@ putConnectionInternal updateConn = do
         . json updateConn
   pure $ responseStatus response
 
+-- TODO(sandy): not portant to servant
 deleteBot ::
   ConvId ->
   BotId ->
