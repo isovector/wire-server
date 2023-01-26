@@ -113,6 +113,7 @@ library
     Wire.API.Routes.Version.Wai
     Wire.API.Routes.Versioned
     Wire.API.Routes.WebSocket
+    Wire.API.RPC
     Wire.API.ServantProto
     Wire.API.Swagger
     Wire.API.SwaggerHelper

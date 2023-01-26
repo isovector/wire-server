@@ -39,7 +39,6 @@ import qualified Brig.Types.Intra as Brig
 import Control.Error hiding (bool, isRight)
 import Control.Lens (view, (^.))
 import Control.Monad.Catch
-import Data.ByteString.Char8 (pack)
 import qualified Data.ByteString.Char8 as BSC
 import Data.ByteString.Conversion
 import Data.Id
@@ -69,6 +68,7 @@ import Wire.API.Team.Feature
 import Wire.API.User
 import Wire.API.User.Auth.ReAuth
 import Wire.API.User.RichInfo (RichInfo)
+import Galley.Intra.Machinery
 
 -- | Get statuses of all connections between two groups of users (the usual
 -- pattern is to check all connections from one user to several, or from
@@ -81,17 +81,11 @@ getConnectionsUnqualified ::
   Maybe [UserId] ->
   Maybe Relation ->
   App [ConnectionStatus]
-getConnectionsUnqualified uFrom uTo rlt = do
-  r <-
-    call Brig $
-      method POST
-        . path "/i/users/connections-status"
-        . maybe id rfilter rlt
-        . json ConnectionsStatusRequest {csrFrom = uFrom, csrTo = uTo}
-        . expect2xx
-  parseResponse (mkError status502 "server-error") r
-  where
-    rfilter = queryItem "filter" . (pack . map toLower . show)
+getConnectionsUnqualified uFrom uTo rlt =
+  runAPICall $
+    Galley.Intra.Machinery.rpcClient @'BrigInternal @"get-all-connections-unqualified"
+      ConnectionsStatusRequest {csrFrom = uFrom, csrTo = uTo}
+      rlt
 
 -- | Get statuses of all connections between two groups of users (the usual
 -- pattern is to check all connections from one user to several, or from

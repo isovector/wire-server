@@ -122,6 +122,7 @@ library
     Galley.Intra.Effects
     Galley.Intra.Federator
     Galley.Intra.Journal
+    Galley.Intra.Machinery
     Galley.Intra.Push
     Galley.Intra.Push.Internal
     Galley.Intra.Spar

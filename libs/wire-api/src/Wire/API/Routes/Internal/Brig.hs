@@ -141,7 +141,7 @@ type EJPD_API =
       :<|> Named "get-account-conference-calling-config" GetAccountConferenceCallingConfig
       :<|> PutAccountConferenceCallingConfig
       :<|> DeleteAccountConferenceCallingConfig
-      :<|> GetAllConnectionsUnqualified
+      :<|> Named "get-all-connections-unqualified" GetAllConnectionsUnqualified
       :<|> GetAllConnections
   )
 

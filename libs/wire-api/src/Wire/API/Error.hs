@@ -61,6 +61,7 @@ import Numeric.Natural
 import Polysemy
 import Polysemy.Error
 import Servant
+import Servant.Client
 import Servant.Swagger
 import Wire.API.Routes.MultiVerb
 import Wire.API.Routes.Named (Named)
@@ -165,11 +166,21 @@ instance (HasServer api ctx) => HasServer (CanThrow e :> api) ctx where
   route _ = route (Proxy @api)
   hoistServerWithContext _ = hoistServerWithContext (Proxy @api)
 
+instance (HasClient m api) => HasClient m (CanThrow e :> api) where
+  type Client m (CanThrow e :> api) = Client m api
+  clientWithRoute p _ = clientWithRoute p (Proxy @api)
+  hoistClientMonad p _ = hoistClientMonad p (Proxy @api)
+
 instance (HasServer api ctx) => HasServer (CanThrowMany es :> api) ctx where
   type ServerT (CanThrowMany es :> api) m = ServerT api m
 
   route _ = route (Proxy @api)
   hoistServerWithContext _ = hoistServerWithContext (Proxy @api)
+
+instance (HasClient m api) => HasClient m (CanThrowMany es :> api) where
+  type Client m (CanThrowMany es :> api) = Client m api
+  clientWithRoute p _ = clientWithRoute p (Proxy @api)
+  hoistClientMonad p _ = hoistClientMonad p (Proxy @api)
 
 instance
   (HasSwagger api, IsSwaggerError e) =>
