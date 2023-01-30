@@ -37,16 +37,12 @@ import Bilge.RPC
 import Brig.Types.Connection (UpdateConnectionsInternal, cUsers)
 import qualified Brig.Types.Intra as Brig
 import Control.Error hiding (bool, isRight)
-import Control.Lens (view, (^.))
 import Control.Monad.Catch
 import qualified Data.ByteString.Char8 as BSC
 import Data.ByteString.Conversion
 import Data.Id
 import Data.Qualified
-import Data.String.Conversions
 import qualified Data.Text.Lazy as Lazy
-import Galley.API.Error
-import Galley.Env
 import Galley.Intra.Util
 import Galley.Monad
 import Imports
@@ -56,14 +52,10 @@ import Network.HTTP.Types.Method
 import Network.HTTP.Types.Status
 import Network.Wai.Utilities.Error
 import qualified Network.Wai.Utilities.Error as Wai
-import qualified Servant.Client as Client
-import Util.Options
 import Wire.API.Connection
 import Wire.API.Error.Galley
-import qualified Wire.API.Routes.Internal.Brig as IAPI
 import Wire.API.Routes.Internal.Brig.Connection
 import qualified Wire.API.Routes.Internal.Galley.TeamFeatureNoConfigMulti as Multi
-import Wire.API.Routes.Named
 import Wire.API.Team.Feature
 import Wire.API.User
 import Wire.API.User.Auth.ReAuth
@@ -162,6 +154,7 @@ check allowed r =
     }
 
 -- | Calls 'Brig.API.listActivatedAccountsH'.
+-- TODO(sandy): not ported
 lookupActivatedUsers :: [UserId] -> App [User]
 lookupActivatedUsers = chunkify $ \uids -> do
   let users = BSC.intercalate "," $ toByteString' <$> uids
@@ -188,6 +181,7 @@ chunkify doChunk keys = mconcat <$> (doChunk `mapM` chunks keys)
     chunks uids = case splitAt maxSize uids of (h, t) -> h : chunks t
 
 -- | Calls 'Brig.API.listActivatedAccountsH'.
+-- TODO(sandy): not ported
 getUsers :: [UserId] -> App [Brig.UserAccount]
 getUsers = chunkify $ \uids -> do
   resp <-
@@ -199,6 +193,7 @@ getUsers = chunkify $ \uids -> do
   pure . fromMaybe [] . responseJsonMaybe $ resp
 
 -- | Calls 'Brig.API.deleteUserNoAuthH'.
+-- TODO(sandy): not ported
 deleteUser :: UserId -> App ()
 deleteUser uid = do
   void $
@@ -208,6 +203,7 @@ deleteUser uid = do
         . expect2xx
 
 -- | Calls 'Brig.API.getContactListH'.
+-- TODO(sandy): not ported
 getContactList :: UserId -> App [UserId]
 getContactList uid = do
   r <-
@@ -218,6 +214,7 @@ getContactList uid = do
   cUsers <$> parseResponse (mkError status502 "server-error") r
 
 -- | Calls 'Brig.API.Internal.getRichInfoMultiH'
+-- TODO(sandy): not ported
 getRichInfoMultiUser :: [UserId] -> App [(UserId, RichInfo)]
 getRichInfoMultiUser = chunkify $ \uids -> do
   resp <-
@@ -230,25 +227,10 @@ getRichInfoMultiUser = chunkify $ \uids -> do
 
 getAccountConferenceCallingConfigClient :: HasCallStack => UserId -> App (WithStatusNoLock ConferenceCallingConfig)
 getAccountConferenceCallingConfigClient uid =
-  runHereClientM (namedClient @IAPI.API @"get-account-conference-calling-config" uid)
-    >>= handleServantResp
+  runAPICall $
+    Galley.Intra.Machinery.rpcClient @'BrigInternal @"get-account-conference-calling-config" uid
 
 updateSearchVisibilityInbound :: Multi.TeamStatus SearchVisibilityInboundConfig -> App ()
-updateSearchVisibilityInbound =
-  handleServantResp
-    <=< runHereClientM
-      . namedClient @IAPI.API @"updateSearchVisibilityInbound"
-
-runHereClientM :: HasCallStack => Client.ClientM a -> App (Either Client.ClientError a)
-runHereClientM action = do
-  mgr <- view manager
-  brigep <- view brig
-  let env = Client.mkClientEnv mgr baseurl
-      baseurl = Client.BaseUrl Client.Http (cs $ brigep ^. epHost) (fromIntegral $ brigep ^. epPort) ""
-  liftIO $ Client.runClientM action env
-
-handleServantResp ::
-  Either Client.ClientError a ->
-  App a
-handleServantResp (Right cfg) = pure cfg
-handleServantResp (Left errmsg) = throwM . internalErrorWithDescription . cs . show $ errmsg
+updateSearchVisibilityInbound ts =
+  runAPICall $
+    Galley.Intra.Machinery.rpcClient @'BrigInternal @"updateSearchVisibilityInbound" ts

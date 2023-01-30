@@ -1,5 +1,6 @@
 module Galley.Intra.Machinery
   ( rpcClient
+  , doAPICall
   , RpcComponent (..)
   , runAPICall
   ) where
@@ -15,13 +16,16 @@ import qualified Servant.Client as Client
 import Util.Options
 import Wire.API.RPC
 
-runAPICall :: HasCallStack => Client.ClientM a -> App a
-runAPICall action = do
+doAPICall :: HasCallStack => Client.ClientM a -> App (Either Client.ClientError a)
+doAPICall action = do
   mgr <- view manager
   brigep <- view brig
   let env = Client.mkClientEnv mgr baseurl
       baseurl = Client.BaseUrl Client.Http (cs $ brigep ^. epHost) (fromIntegral $ brigep ^. epPort) ""
-  liftIO (Client.runClientM action env) >>= handleServantResp
+  liftIO $ Client.runClientM action env
+
+runAPICall :: HasCallStack => Client.ClientM a -> App a
+runAPICall action = doAPICall action >>= handleServantResp
 
 handleServantResp ::
   Either Client.ClientError a ->
