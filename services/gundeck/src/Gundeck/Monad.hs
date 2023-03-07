@@ -60,6 +60,7 @@ import Network.Wai
 import Network.Wai.Utilities
 import qualified System.Logger as Logger
 import System.Logger.Class hiding (Error, info)
+import UnliftIO (async)
 
 -- | TODO: 'Client' already has an 'Env'.  Why do we need two?  How does this even work?  We should
 -- probably explain this here.
@@ -135,7 +136,7 @@ instance Redis.MonadRedis WithAdditionalRedis where
 
     mAdditionalRedisConn <- view rstateAdditionalWrite
     for_ mAdditionalRedisConn $ \additionalRedisConn ->
-      Redis.runRobust additionalRedisConn action
+      async $ Redis.runRobust additionalRedisConn action
 
     pure ret
 
