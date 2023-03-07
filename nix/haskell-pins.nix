@@ -57,6 +57,13 @@
 { lib, fetchgit }: hself: hsuper:
 let
   gitPins = {
+    hedis = {
+      src = fetchgit {
+        url = "https://github.com/isovector/hedis";
+        rev = "e3ef7ae7b7c23904e5dc210c0595533d776a48d4";
+        sha256 = "sha256-1P6kHA6H+TaPJ5dSKYUtc7m2odEaDetvqk6hJ4JISWo=";
+      };
+    };
     transitive-anns = {
       src = fetchgit {
         url = "https://github.com/wireapp/transitive-anns";

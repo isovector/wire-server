@@ -15,6 +15,7 @@
 -- You should have received a copy of the GNU Affero General Public License along
 -- with this program. If not, see <https://www.gnu.org/licenses/>.
 {-# LANGUAGE NumericUnderscores #-}
+{-# OPTIONS_GHC -Wno-unused-imports #-}
 
 module Gundeck.Run where
 
@@ -55,6 +56,7 @@ import qualified UnliftIO.Async as Async
 import Util.Options
 import Wire.API.Routes.Public.Gundeck (GundeckAPI)
 import Wire.API.Routes.Version.Wai
+import Debug.Trace
 
 run :: Opts -> IO ()
 run o = do
@@ -69,13 +71,14 @@ run o = do
   wtbs <- forM (e ^. threadBudgetState) $ \tbs -> Async.async $ runDirect e $ watchThreadBudgetState m tbs 10
   wCollectAuth <- Async.async (collectAuthMetrics m (Aws._awsEnv (Env._awsEnv e)))
   runSettingsWithShutdown s (middleware e $ mkApp e) Nothing `finally` do
+    traceMarkerIO "shutting down"
     Log.info l $ Log.msg (Log.val "Shutting down ...")
     shutdown (e ^. cstate)
     Async.cancel lst
     Async.cancel wCollectAuth
     forM_ wtbs Async.cancel
-    Redis.disconnect . (^. Redis.rrConnection) =<< takeMVar (e ^. rstate)
-    whenJust (e ^. rstateAdditionalWrite) $ (=<<) (Redis.disconnect . (^. Redis.rrConnection)) . takeMVar
+    Redis.disconnect =<< takeMVar (e ^. rstate)
+    whenJust (e ^. rstateAdditionalWrite) $ (=<<) (Redis.disconnect) . takeMVar
     Log.close (e ^. applog)
   where
     middleware :: Env -> Wai.Middleware

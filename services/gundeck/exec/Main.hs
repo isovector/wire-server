@@ -24,9 +24,10 @@ import Gundeck.Run (run)
 import Imports
 import OpenSSL (withOpenSSL)
 import Util.Options
+import GHC.Debug.Stub
 
 main :: IO ()
-main = withOpenSSL $ do
+main = withGhcDebug $ withOpenSSL $ do
   options <- getOptions desc Nothing defaultPath
   run options
   where

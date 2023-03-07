@@ -69,6 +69,7 @@ import System.Logger.Class (msg, val, (+++), (.=), (~~))
 import qualified System.Logger.Class as Log
 import Wire.API.Internal.Notification
 import qualified Wire.API.Push.Token as Public
+import Debug.Trace
 
 push :: [Push] -> Gundeck ()
 push ps = do
@@ -101,7 +102,11 @@ instance MonadPushAll Gundeck where
   mpaBulkPush = Web.bulkPush
   mpaStreamAdd = Stream.add
   mpaPushNative = pushNative
-  mpaForkIO = void . forkIO
+  mpaForkIO m = void $ forkIO $ do
+    liftIO $ traceMarkerIO "fork start"
+    r <- m
+    liftIO $ traceMarkerIO "fork end"
+    pure r
   mpaRunWithBudget = runWithBudget''
 
 -- | Another layer of wrap around 'runWithBudget'.
@@ -199,6 +204,7 @@ pushAll pushes = do
       mpaStreamAdd (ntfId ctNotification) ctNotificationTargets (ntfPayload ctNotification)
         =<< mpaNotificationTTL
   mpaForkIO $ do
+
     -- websockets
     wsTargets <- mapM mkWSTargets newNotifications
     resp <- compilePushResps wsTargets <$> mpaBulkPush (compilePushReq <$> wsTargets)

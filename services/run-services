@@ -51,7 +51,7 @@ class Service:
             return self.name
         else:
             return self._internal_name
-    
+
     def path(self):
         return os.path.join(ROOT, "dist", self.name)
 
@@ -65,6 +65,14 @@ class Service:
 
 
     def spawn(self, config_file, environment):
+        if self.name == "gundeck":
+            return subprocess.Popen([self.path(), "-c", config_file, "+RTS", "-p", "-hy", "-l-agu", "--disable-delayed-os-memory-return"],
+                                encoding='utf-8',
+                                cwd=os.path.join(ROOT, "services", self.name),
+                                env=environment,
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT)
+
         return subprocess.Popen([self.path(), "-c", config_file],
                                encoding='utf-8',
                                cwd=os.path.join(ROOT, "services", self.name),

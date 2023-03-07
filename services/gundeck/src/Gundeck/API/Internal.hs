@@ -76,7 +76,7 @@ type JSON = Media "application" "json"
 pushH :: Request ::: JSON -> Gundeck Response
 pushH (req ::: _) = do
   ps <- fromJsonBody (JsonRequest req)
-  empty <$ Push.push ps
+  (empty <$ Push.push ps)
 
 unregisterClientH :: UserId ::: ClientId -> Gundeck Response
 unregisterClientH (uid ::: cid) = empty <$ Client.unregister uid cid

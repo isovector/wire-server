@@ -1,0 +1,1834 @@
+<?xml version="1.0" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg version="1.1" width="1200" height="998" onload="init(evt)" viewBox="0 0 1200 998" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<!-- Flame graph stack visualization. See https://github.com/brendangregg/FlameGraph for latest version, and http://www.brendangregg.com/flamegraphs.html for examples. -->
+<!-- NOTES:  -->
+<defs >
+	<linearGradient id="background" y1="0" y2="1" x1="0" x2="0" >
+		<stop stop-color="#eeeeee" offset="5%" />
+		<stop stop-color="#eeeeb0" offset="95%" />
+	</linearGradient>
+</defs>
+<style type="text/css">
+	.func_g:hover { stroke:black; stroke-width:0.5; cursor:pointer; }
+</style>
+<script type="text/ecmascript">
+<![CDATA[
+	var details, searchbtn, matchedtxt, svg;
+	function init(evt) {
+		details = document.getElementById("details").firstChild;
+		searchbtn = document.getElementById("search");
+		matchedtxt = document.getElementById("matched");
+		svg = document.getElementsByTagName("svg")[0];
+		searching = 0;
+	}
+
+	// mouse-over for info
+	function s(node) {		// show
+		info = g_to_text(node);
+		details.nodeValue = "Function: " + info;
+	}
+	function c() {			// clear
+		details.nodeValue = ' ';
+	}
+
+	// ctrl-F for search
+	window.addEventListener("keydown",function (e) {
+		if (e.keyCode === 114 || (e.ctrlKey && e.keyCode === 70)) {
+			e.preventDefault();
+			search_prompt();
+		}
+	})
+
+	// functions
+	function find_child(parent, name, attr) {
+		var children = parent.childNodes;
+		for (var i=0; i<children.length;i++) {
+			if (children[i].tagName == name)
+				return (attr != undefined) ? children[i].attributes[attr].value : children[i];
+		}
+		return;
+	}
+	function orig_save(e, attr, val) {
+		if (e.attributes["_orig_"+attr] != undefined) return;
+		if (e.attributes[attr] == undefined) return;
+		if (val == undefined) val = e.attributes[attr].value;
+		e.setAttribute("_orig_"+attr, val);
+	}
+	function orig_load(e, attr) {
+		if (e.attributes["_orig_"+attr] == undefined) return;
+		e.attributes[attr].value = e.attributes["_orig_"+attr].value;
+		e.removeAttribute("_orig_"+attr);
+	}
+	function g_to_text(e) {
+		var text = find_child(e, "title").firstChild.nodeValue;
+		return (text)
+	}
+	function g_to_func(e) {
+		var func = g_to_text(e);
+		// if there's any manipulation we want to do to the function
+		// name before it's searched, do it here before returning.
+		return (func);
+	}
+	function update_text(e) {
+		var r = find_child(e, "rect");
+		var t = find_child(e, "text");
+		var w = parseFloat(r.attributes["width"].value) -3;
+		var txt = find_child(e, "title").textContent.replace(/\([^(]*\)$/,"");
+		t.attributes["x"].value = parseFloat(r.attributes["x"].value) +3;
+
+		// Smaller than this size won't fit anything
+		if (w < 2*12*0.59) {
+			t.textContent = "";
+			return;
+		}
+
+		t.textContent = txt;
+		// Fit in full text width
+		if (/^ *$/.test(txt) || t.getSubStringLength(0, txt.length) < w)
+			return;
+
+		for (var x=txt.length-2; x>0; x--) {
+			if (t.getSubStringLength(0, x+2) <= w) {
+				t.textContent = txt.substring(0,x) + "..";
+				return;
+			}
+		}
+		t.textContent = "";
+	}
+
+	// zoom
+	function zoom_reset(e) {
+		if (e.attributes != undefined) {
+			orig_load(e, "x");
+			orig_load(e, "width");
+		}
+		if (e.childNodes == undefined) return;
+		for(var i=0, c=e.childNodes; i<c.length; i++) {
+			zoom_reset(c[i]);
+		}
+	}
+	function zoom_child(e, x, ratio) {
+		if (e.attributes != undefined) {
+			if (e.attributes["x"] != undefined) {
+				orig_save(e, "x");
+				e.attributes["x"].value = (parseFloat(e.attributes["x"].value) - x - 10) * ratio + 10;
+				if(e.tagName == "text") e.attributes["x"].value = find_child(e.parentNode, "rect", "x") + 3;
+			}
+			if (e.attributes["width"] != undefined) {
+				orig_save(e, "width");
+				e.attributes["width"].value = parseFloat(e.attributes["width"].value) * ratio;
+			}
+		}
+
+		if (e.childNodes == undefined) return;
+		for(var i=0, c=e.childNodes; i<c.length; i++) {
+			zoom_child(c[i], x-10, ratio);
+		}
+	}
+	function zoom_parent(e) {
+		if (e.attributes) {
+			if (e.attributes["x"] != undefined) {
+				orig_save(e, "x");
+				e.attributes["x"].value = 10;
+			}
+			if (e.attributes["width"] != undefined) {
+				orig_save(e, "width");
+				e.attributes["width"].value = parseInt(svg.width.baseVal.value) - (10*2);
+			}
+		}
+		if (e.childNodes == undefined) return;
+		for(var i=0, c=e.childNodes; i<c.length; i++) {
+			zoom_parent(c[i]);
+		}
+	}
+	function zoom(node) {
+		var attr = find_child(node, "rect").attributes;
+		var width = parseFloat(attr["width"].value);
+		var xmin = parseFloat(attr["x"].value);
+		var xmax = parseFloat(xmin + width);
+		var ymin = parseFloat(attr["y"].value);
+		var ratio = (svg.width.baseVal.value - 2*10) / width;
+
+		// XXX: Workaround for JavaScript float issues (fix me)
+		var fudge = 0.0001;
+
+		var unzoombtn = document.getElementById("unzoom");
+		unzoombtn.style["opacity"] = "1.0";
+
+		var el = document.getElementsByTagName("g");
+		for(var i=0;i<el.length;i++){
+			var e = el[i];
+			var a = find_child(e, "rect").attributes;
+			var ex = parseFloat(a["x"].value);
+			var ew = parseFloat(a["width"].value);
+			// Is it an ancestor
+			if (0 == 0) {
+				var upstack = parseFloat(a["y"].value) > ymin;
+			} else {
+				var upstack = parseFloat(a["y"].value) < ymin;
+			}
+			if (upstack) {
+				// Direct ancestor
+				if (ex <= xmin && (ex+ew+fudge) >= xmax) {
+					e.style["opacity"] = "0.5";
+					zoom_parent(e);
+					e.onclick = function(e){unzoom(); zoom(this);};
+					update_text(e);
+				}
+				// not in current path
+				else
+					e.style["display"] = "none";
+			}
+			// Children maybe
+			else {
+				// no common path
+				if (ex < xmin || ex + fudge >= xmax) {
+					e.style["display"] = "none";
+				}
+				else {
+					zoom_child(e, xmin, ratio);
+					e.onclick = function(e){zoom(this);};
+					update_text(e);
+				}
+			}
+		}
+	}
+	function unzoom() {
+		var unzoombtn = document.getElementById("unzoom");
+		unzoombtn.style["opacity"] = "0.0";
+
+		var el = document.getElementsByTagName("g");
+		for(i=0;i<el.length;i++) {
+			el[i].style["display"] = "block";
+			el[i].style["opacity"] = "1";
+			zoom_reset(el[i]);
+			update_text(el[i]);
+		}
+	}
+
+	// search
+	function reset_search() {
+		var el = document.getElementsByTagName("rect");
+		for (var i=0; i < el.length; i++) {
+			orig_load(el[i], "fill")
+		}
+	}
+	function search_prompt() {
+		if (!searching) {
+			var term = prompt("Enter a search term (regexp " +
+			    "allowed, eg: ^ext4_)", "");
+			if (term != null) {
+				search(term)
+			}
+		} else {
+			reset_search();
+			searching = 0;
+			searchbtn.style["opacity"] = "0.1";
+			searchbtn.firstChild.nodeValue = "Search"
+			matchedtxt.style["opacity"] = "0.0";
+			matchedtxt.firstChild.nodeValue = ""
+		}
+	}
+	function search(term) {
+		var re = new RegExp(term);
+		var el = document.getElementsByTagName("g");
+		var matches = new Object();
+		var maxwidth = 0;
+		for (var i = 0; i < el.length; i++) {
+			var e = el[i];
+			if (e.attributes["class"].value != "func_g")
+				continue;
+			var func = g_to_func(e);
+			var rect = find_child(e, "rect");
+			if (rect == null) {
+				// the rect might be wrapped in an anchor
+				// if nameattr href is being used
+				if (rect = find_child(e, "a")) {
+				    rect = find_child(r, "rect");
+				}
+			}
+			if (func == null || rect == null)
+				continue;
+
+			// Save max width. Only works as we have a root frame
+			var w = parseFloat(rect.attributes["width"].value);
+			if (w > maxwidth)
+				maxwidth = w;
+
+			if (func.match(re)) {
+				// highlight
+				var x = parseFloat(rect.attributes["x"].value);
+				orig_save(rect, "fill");
+				rect.attributes["fill"].value =
+				    "rgb(230,0,230)";
+
+				// remember matches
+				if (matches[x] == undefined) {
+					matches[x] = w;
+				} else {
+					if (w > matches[x]) {
+						// overwrite with parent
+						matches[x] = w;
+					}
+				}
+				searching = 1;
+			}
+		}
+		if (!searching)
+			return;
+
+		searchbtn.style["opacity"] = "1.0";
+		searchbtn.firstChild.nodeValue = "Reset Search"
+
+		// calculate percent matched, excluding vertical overlap
+		var count = 0;
+		var lastx = -1;
+		var lastw = 0;
+		var keys = Array();
+		for (k in matches) {
+			if (matches.hasOwnProperty(k))
+				keys.push(k);
+		}
+		// sort the matched frames by their x location
+		// ascending, then width descending
+		keys.sort(function(a, b){
+			return a - b;
+		});
+		// Step through frames saving only the biggest bottom-up frames
+		// thanks to the sort order. This relies on the tree property
+		// where children are always smaller than their parents.
+		var fudge = 0.0001;	// JavaScript floating point
+		for (var k in keys) {
+			var x = parseFloat(keys[k]);
+			var w = matches[keys[k]];
+			if (x >= lastx + lastw - fudge) {
+				count += w;
+				lastx = x;
+				lastw = w;
+			}
+		}
+		// display matched percent
+		matchedtxt.style["opacity"] = "1.0";
+		pct = 100 * count / maxwidth;
+		if (pct == 100)
+			pct = "100"
+		else
+			pct = pct.toFixed(1)
+		matchedtxt.firstChild.nodeValue = "Matched: " + pct + "%";
+	}
+	function searchover(e) {
+		searchbtn.style["opacity"] = "1.0";
+	}
+	function searchout(e) {
+		if (searching) {
+			searchbtn.style["opacity"] = "1.0";
+		} else {
+			searchbtn.style["opacity"] = "0.1";
+		}
+	}
+]]>
+</script>
+<rect x="0.0" y="0" width="1200.0" height="998.0" fill="url(#background)"  />
+<text text-anchor="middle" x="600.00" y="24" font-size="17" font-family="Verdana" fill="rgb(0,0,0)"  >Flame Graph</text>
+<text text-anchor="" x="10.00" y="981" font-size="12" font-family="Verdana" fill="rgb(0,0,0)" id="details" > </text>
+<text text-anchor="" x="10.00" y="24" font-size="12" font-family="Verdana" fill="rgb(0,0,0)" id="unzoom" onclick="unzoom()" style="opacity:0.0;cursor:pointer" >Reset Zoom</text>
+<text text-anchor="" x="1090.00" y="24" font-size="12" font-family="Verdana" fill="rgb(0,0,0)" id="search" onmouseover="searchover()" onmouseout="searchout()" onclick="search_prompt()" style="opacity:0.1;cursor:pointer" >Search</text>
+<text text-anchor="" x="1090.00" y="981" font-size="12" font-family="Verdana" fill="rgb(0,0,0)" id="matched" > </text>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Control.Monad.Trans.Resource.Internal.transResourceT (1 samples, 0.10%)</title><rect x="1121.6" y="757" width="1.1" height="15.0" fill="rgb(237,69,20)" rx="2" ry="2" />
+<text text-anchor="" x="1124.56" y="767.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.HTTP.Client.Types.managerTlsConnection (1 samples, 0.10%)</title><rect x="13.5" y="789" width="1.2" height="15.0" fill="rgb(249,179,30)" rx="2" ry="2" />
+<text text-anchor="" x="16.54" y="799.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Control.Retry.resumeRecovering (671 samples, 67.10%)</title><rect x="111.5" y="517" width="791.8" height="15.0" fill="rgb(232,23,39)" rx="2" ry="2" />
+<text text-anchor="" x="114.48" y="527.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Control.Retry.resumeRecovering</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Wai.Handler.Warp.Date.withDateCache (857 samples, 85.70%)</title><rect x="110.3" y="757" width="1011.3" height="15.0" fill="rgb(226,39,36)" rx="2" ry="2" />
+<text text-anchor="" x="113.30" y="767.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Network.Wai.Handler.Warp.Date.withDateCache</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Database.Redis.Cluster.requestPipelined (1 samples, 0.10%)</title><rect x="1096.8" y="149" width="1.2" height="15.0" fill="rgb(230,42,14)" rx="2" ry="2" />
+<text text-anchor="" x="1099.78" y="159.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Gundeck.Run.mkApp (181 samples, 18.10%)</title><rect x="908.0" y="421" width="213.6" height="15.0" fill="rgb(216,71,16)" rx="2" ry="2" />
+<text text-anchor="" x="910.98" y="431.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Gundeck.Run.mkApp</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>UnliftIO.Exception.handleAny (19 samples, 1.90%)</title><rect x="1122.7" y="773" width="22.5" height="15.0" fill="rgb(205,134,31)" rx="2" ry="2" />
+<text text-anchor="" x="1125.74" y="783.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >U..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>UnliftIO.Exception.catch (78 samples, 7.80%)</title><rect x="15.9" y="773" width="92.0" height="15.0" fill="rgb(221,100,3)" rx="2" ry="2" />
+<text text-anchor="" x="18.90" y="783.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >UnliftIO.E..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Wai.Handler.Warp.Settings.defaultFork (857 samples, 85.70%)</title><rect x="110.3" y="629" width="1011.3" height="15.0" fill="rgb(248,103,27)" rx="2" ry="2" />
+<text text-anchor="" x="113.30" y="639.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Network.Wai.Handler.Warp.Settings.defaultFork</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Database.Redis.ConnectionContext.recv (4 samples, 0.40%)</title><rect x="1034.2" y="101" width="4.8" height="15.0" fill="rgb(220,86,5)" rx="2" ry="2" />
+<text text-anchor="" x="1037.24" y="111.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Control.Monad.Trans.Resource.Internal.transResourceT (19 samples, 1.90%)</title><rect x="1122.7" y="613" width="22.5" height="15.0" fill="rgb(211,222,54)" rx="2" ry="2" />
+<text text-anchor="" x="1125.74" y="623.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >C..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Database.CQL.IO.Client.runClient (48 samples, 4.80%)</title><rect x="971.7" y="325" width="56.6" height="15.0" fill="rgb(205,86,32)" rx="2" ry="2" />
+<text text-anchor="" x="974.70" y="335.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Datab..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Gundeck.Presence.Data.add.k (2 samples, 0.20%)</title><rect x="1043.7" y="181" width="2.3" height="15.0" fill="rgb(218,95,7)" rx="2" ry="2" />
+<text text-anchor="" x="1046.68" y="191.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Socket.Types.withFdSocket (1 samples, 0.10%)</title><rect x="902.1" y="357" width="1.2" height="15.0" fill="rgb(208,81,42)" rx="2" ry="2" />
+<text text-anchor="" x="905.08" y="367.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.HTTP.Conduit.http (1 samples, 0.10%)</title><rect x="1121.6" y="741" width="1.1" height="15.0" fill="rgb(250,36,0)" rx="2" ry="2" />
+<text text-anchor="" x="1124.56" y="751.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Blaze.ByteString.Builder.toByteStringIO (3 samples, 0.30%)</title><rect x="1141.6" y="437" width="3.6" height="15.0" fill="rgb(222,207,47)" rx="2" ry="2" />
+<text text-anchor="" x="1144.62" y="447.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.HTTP.Client.TLS.tlsManagerSettings (1 samples, 0.10%)</title><rect x="109.1" y="837" width="1.2" height="15.0" fill="rgb(232,214,40)" rx="2" ry="2" />
+<text text-anchor="" x="112.12" y="847.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Amazonka.Data.XML.decodeXML (8 samples, 0.80%)</title><rect x="1122.7" y="565" width="9.5" height="15.0" fill="rgb(218,92,33)" rx="2" ry="2" />
+<text text-anchor="" x="1125.74" y="575.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Data.Streaming.ByteString.Builder.Buffer.defaultStrategy (29 samples, 2.90%)</title><rect x="990.6" y="117" width="34.2" height="15.0" fill="rgb(218,59,27)" rx="2" ry="2" />
+<text text-anchor="" x="993.58" y="127.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Da..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Wai.Routing.Route.prepare (15 samples, 1.50%)</title><rect x="1028.3" y="261" width="17.7" height="15.0" fill="rgb(253,99,44)" rx="2" ry="2" />
+<text text-anchor="" x="1031.34" y="271.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.HTTP.Client.TLS.mkManagerSettings (1 samples, 0.10%)</title><rect x="109.1" y="821" width="1.2" height="15.0" fill="rgb(247,176,41)" rx="2" ry="2" />
+<text text-anchor="" x="112.12" y="831.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Database.Redis.Core.runRedisClusteredInternal (1 samples, 0.10%)</title><rect x="97.3" y="629" width="1.2" height="15.0" fill="rgb(239,26,17)" rx="2" ry="2" />
+<text text-anchor="" x="100.32" y="639.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Data.Aeson.Parser.Internal.value' (3 samples, 0.30%)</title><rect x="1093.2" y="165" width="3.6" height="15.0" fill="rgb(233,55,44)" rx="2" ry="2" />
+<text text-anchor="" x="1096.24" y="175.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Database.Redis.Cluster.disconnect (1 samples, 0.10%)</title><rect x="17.1" y="645" width="1.2" height="15.0" fill="rgb(245,65,38)" rx="2" ry="2" />
+<text text-anchor="" x="20.08" y="655.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Wai.Routing.Route.routeWith (3 samples, 0.30%)</title><rect x="968.2" y="373" width="3.5" height="15.0" fill="rgb(247,10,12)" rx="2" ry="2" />
+<text text-anchor="" x="971.16" y="383.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Data.Aeson.Types.FromJSON.withText (1 samples, 0.10%)</title><rect x="1092.1" y="69" width="1.1" height="15.0" fill="rgb(249,72,29)" rx="2" ry="2" />
+<text text-anchor="" x="1095.06" y="79.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Data.Aeson.Types.FromJSON.withObject (34 samples, 3.40%)</title><rect x="1053.1" y="181" width="40.1" height="15.0" fill="rgb(214,76,19)" rx="2" ry="2" />
+<text text-anchor="" x="1056.12" y="191.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Dat..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Control.Retry.resumeRecoveringDynamic (77 samples, 7.70%)</title><rect x="15.9" y="709" width="90.9" height="15.0" fill="rgb(226,216,9)" rx="2" ry="2" />
+<text text-anchor="" x="18.90" y="719.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Control.Re..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Data.Aeson.encode (3 samples, 0.30%)</title><rect x="1118.0" y="197" width="3.6" height="15.0" fill="rgb(206,26,31)" rx="2" ry="2" />
+<text text-anchor="" x="1121.02" y="207.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Data.Aeson.Types.FromJSON.fromJSON (16 samples, 1.60%)</title><rect x="1099.1" y="165" width="18.9" height="15.0" fill="rgb(247,96,14)" rx="2" ry="2" />
+<text text-anchor="" x="1102.14" y="175.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>System.X509.Unix.getSystemCertificateStore (1 samples, 0.10%)</title><rect x="107.9" y="773" width="1.2" height="15.0" fill="rgb(220,66,43)" rx="2" ry="2" />
+<text text-anchor="" x="110.94" y="783.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Amazonka.Types.requestSign (8 samples, 0.80%)</title><rect x="1132.2" y="581" width="9.4" height="15.0" fill="rgb(244,192,18)" rx="2" ry="2" />
+<text text-anchor="" x="1135.18" y="591.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Data.Aeson.Encoding.Builder.encodeToBuilder (1 samples, 0.10%)</title><rect x="1119.2" y="149" width="1.2" height="15.0" fill="rgb(210,67,9)" rx="2" ry="2" />
+<text text-anchor="" x="1122.20" y="159.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Database.Redis.ConnectionContext.ioErrorToConnLost (3 samples, 0.30%)</title><rect x="18.3" y="613" width="3.5" height="15.0" fill="rgb(221,185,12)" rx="2" ry="2" />
+<text text-anchor="" x="21.26" y="623.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Wai.Handler.Warp.ResponseHeader.composeHeader (1 samples, 0.10%)</title><rect x="1027.2" y="117" width="1.1" height="15.0" fill="rgb(241,83,47)" rx="2" ry="2" />
+<text text-anchor="" x="1030.16" y="127.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Socket.ByteString.IO.recv (1 samples, 0.10%)</title><rect x="1121.6" y="485" width="1.1" height="15.0" fill="rgb(248,125,7)" rx="2" ry="2" />
+<text text-anchor="" x="1124.56" y="495.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.HTTP.Client.TLS.tlsManagerSettings (1 samples, 0.10%)</title><rect x="107.9" y="837" width="1.2" height="15.0" fill="rgb(223,226,54)" rx="2" ry="2" />
+<text text-anchor="" x="110.94" y="847.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Gundeck.Redis.HedisExtensions.showsPrec (1 samples, 0.10%)</title><rect x="106.8" y="709" width="1.1" height="15.0" fill="rgb(250,190,4)" rx="2" ry="2" />
+<text text-anchor="" x="109.76" y="719.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Data.Aeson.Parser.Internal.jstring (3 samples, 0.30%)</title><rect x="1093.2" y="149" width="3.6" height="15.0" fill="rgb(250,5,35)" rx="2" ry="2" />
+<text text-anchor="" x="1096.24" y="159.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Amazonka.Send.sendEither (19 samples, 1.90%)</title><rect x="1122.7" y="661" width="22.5" height="15.0" fill="rgb(227,77,46)" rx="2" ry="2" />
+<text text-anchor="" x="1125.74" y="671.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >A..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Wai.Utilities.Server.route (15 samples, 1.50%)</title><rect x="1028.3" y="325" width="17.7" height="15.0" fill="rgb(216,59,14)" rx="2" ry="2" />
+<text text-anchor="" x="1031.34" y="335.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Data.Metrics.Middleware.Prometheus.normalizeWaiRequestRoute (2 samples, 0.20%)</title><rect x="905.6" y="485" width="2.4" height="15.0" fill="rgb(233,23,20)" rx="2" ry="2" />
+<text text-anchor="" x="908.62" y="495.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Data.Aeson.Parser.Internal.jsonEOF' (1 samples, 0.10%)</title><rect x="1098.0" y="165" width="1.1" height="15.0" fill="rgb(207,117,52)" rx="2" ry="2" />
+<text text-anchor="" x="1100.96" y="175.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Connection.initConnectionContext (1 samples, 0.10%)</title><rect x="14.7" y="725" width="1.2" height="15.0" fill="rgb(234,159,6)" rx="2" ry="2" />
+<text text-anchor="" x="17.72" y="735.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Database.Redis.Protocol.renderRequest (2 samples, 0.20%)</title><rect x="1031.9" y="117" width="2.3" height="15.0" fill="rgb(206,13,35)" rx="2" ry="2" />
+<text text-anchor="" x="1034.88" y="127.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Gundeck.API.Internal.sitemap (48 samples, 4.80%)</title><rect x="971.7" y="229" width="56.6" height="15.0" fill="rgb(240,21,39)" rx="2" ry="2" />
+<text text-anchor="" x="974.70" y="239.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Gunde..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Data.Aeson.Types.FromJSON.withText (16 samples, 1.60%)</title><rect x="1099.1" y="85" width="18.9" height="15.0" fill="rgb(241,50,6)" rx="2" ry="2" />
+<text text-anchor="" x="1102.14" y="95.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.HTTP.Client.Connection.openSocketConnectionSize (1 samples, 0.10%)</title><rect x="1121.6" y="613" width="1.1" height="15.0" fill="rgb(210,154,32)" rx="2" ry="2" />
+<text text-anchor="" x="1124.56" y="623.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Socket.Syscall.connectLoop (1 samples, 0.10%)</title><rect x="1121.6" y="549" width="1.1" height="15.0" fill="rgb(248,54,28)" rx="2" ry="2" />
+<text text-anchor="" x="1124.56" y="559.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Socket.Syscall.connectLoop (1 samples, 0.10%)</title><rect x="902.1" y="373" width="1.2" height="15.0" fill="rgb(215,186,28)" rx="2" ry="2" />
+<text text-anchor="" x="905.08" y="383.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Connection.initConnectionContext (1 samples, 0.10%)</title><rect x="109.1" y="789" width="1.2" height="15.0" fill="rgb(209,198,0)" rx="2" ry="2" />
+<text text-anchor="" x="112.12" y="799.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Gundeck.Redis.connectRobust.logEx (7 samples, 0.70%)</title><rect x="98.5" y="677" width="8.3" height="15.0" fill="rgb(244,112,5)" rx="2" ry="2" />
+<text text-anchor="" x="101.50" y="687.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Data.Conduit.List.peek (1 samples, 0.10%)</title><rect x="1131.0" y="469" width="1.2" height="15.0" fill="rgb(211,221,31)" rx="2" ry="2" />
+<text text-anchor="" x="1134.00" y="479.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Wai.Utilities.Server.compile (64 samples, 6.40%)</title><rect x="1046.0" y="293" width="75.6" height="15.0" fill="rgb(216,53,3)" rx="2" ry="2" />
+<text text-anchor="" x="1049.04" y="303.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Network...</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Gundeck.Aws.*&gt; (19 samples, 1.90%)</title><rect x="1122.7" y="789" width="22.5" height="15.0" fill="rgb(219,44,32)" rx="2" ry="2" />
+<text text-anchor="" x="1125.74" y="799.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >G..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>UnliftIO.Exception.bracket (857 samples, 85.70%)</title><rect x="110.3" y="853" width="1011.3" height="15.0" fill="rgb(234,64,41)" rx="2" ry="2" />
+<text text-anchor="" x="113.30" y="863.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >UnliftIO.Exception.bracket</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Database.Redis.ManualCommands.command (1 samples, 0.10%)</title><rect x="71.4" y="661" width="1.1" height="15.0" fill="rgb(231,26,18)" rx="2" ry="2" />
+<text text-anchor="" x="74.36" y="671.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Data.HashMap.Internal.hash (3 samples, 0.30%)</title><rect x="132.7" y="389" width="3.6" height="15.0" fill="rgb(249,6,31)" rx="2" ry="2" />
+<text text-anchor="" x="135.72" y="399.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Gundeck.Types.Common.parse (30 samples, 3.00%)</title><rect x="1056.7" y="117" width="35.4" height="15.0" fill="rgb(221,75,47)" rx="2" ry="2" />
+<text text-anchor="" x="1059.66" y="127.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Gun..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Data.Metrics.Types.treeLookup.go.sorted (1 samples, 0.10%)</title><rect x="905.6" y="421" width="1.2" height="15.0" fill="rgb(206,18,22)" rx="2" ry="2" />
+<text text-anchor="" x="908.62" y="431.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>System.Logger.Message.field (2 samples, 0.20%)</title><rect x="98.5" y="661" width="2.4" height="15.0" fill="rgb(222,212,44)" rx="2" ry="2" />
+<text text-anchor="" x="101.50" y="671.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Socket.Handle.socketToHandle (1 samples, 0.10%)</title><rect x="96.1" y="565" width="1.2" height="15.0" fill="rgb(240,171,23)" rx="2" ry="2" />
+<text text-anchor="" x="99.14" y="575.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Amazonka.Data.Path.escapePathTwice (1 samples, 0.10%)</title><rect x="1135.7" y="517" width="1.2" height="15.0" fill="rgb(220,125,26)" rx="2" ry="2" />
+<text text-anchor="" x="1138.72" y="527.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Wai.Routing.Predicate.param (2 samples, 0.20%)</title><rect x="968.2" y="293" width="2.3" height="15.0" fill="rgb(249,109,24)" rx="2" ry="2" />
+<text text-anchor="" x="971.16" y="303.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Amazonka.Sign.V4.Base.signMetadata (6 samples, 0.60%)</title><rect x="1134.5" y="549" width="7.1" height="15.0" fill="rgb(232,12,53)" rx="2" ry="2" />
+<text text-anchor="" x="1137.54" y="559.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.HTTP.Client.Connection.socketConnection (1 samples, 0.10%)</title><rect x="1121.6" y="501" width="1.1" height="15.0" fill="rgb(220,114,51)" rx="2" ry="2" />
+<text text-anchor="" x="1124.56" y="511.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Gundeck.Presence.Data.parseJSON (16 samples, 1.60%)</title><rect x="1099.1" y="149" width="18.9" height="15.0" fill="rgb(254,31,31)" rx="2" ry="2" />
+<text text-anchor="" x="1102.14" y="159.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Scanner.scanWith (14 samples, 1.40%)</title><rect x="18.3" y="629" width="16.5" height="15.0" fill="rgb(253,49,20)" rx="2" ry="2" />
+<text text-anchor="" x="21.26" y="639.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Wai.Handler.Warp.Run.runSettingsSocket (857 samples, 85.70%)</title><rect x="110.3" y="837" width="1011.3" height="15.0" fill="rgb(217,18,7)" rx="2" ry="2" />
+<text text-anchor="" x="113.30" y="847.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Network.Wai.Handler.Warp.Run.runSettingsSocket</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.HTTP.Client.Connection.openSocketConnection (1 samples, 0.10%)</title><rect x="1121.6" y="629" width="1.1" height="15.0" fill="rgb(250,110,38)" rx="2" ry="2" />
+<text text-anchor="" x="1124.56" y="639.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>System.Logger.Settings.renderer (5 samples, 0.50%)</title><rect x="100.9" y="645" width="5.9" height="15.0" fill="rgb(220,221,49)" rx="2" ry="2" />
+<text text-anchor="" x="103.86" y="655.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Amazonka.Env.newEnvNoAuth (2 samples, 0.20%)</title><rect x="13.5" y="821" width="2.4" height="15.0" fill="rgb(242,24,9)" rx="2" ry="2" />
+<text text-anchor="" x="16.54" y="831.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>System.Logger.Message.render (5 samples, 0.50%)</title><rect x="100.9" y="661" width="5.9" height="15.0" fill="rgb(243,85,48)" rx="2" ry="2" />
+<text text-anchor="" x="103.86" y="671.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Amazonka.Crypto.hmacSHA256 (1 samples, 0.10%)</title><rect x="1138.1" y="517" width="1.2" height="15.0" fill="rgb(231,97,29)" rx="2" ry="2" />
+<text text-anchor="" x="1141.08" y="527.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>MAIN.MAIN (962 samples, 96.20%)</title><rect x="10.0" y="933" width="1135.2" height="15.0" fill="rgb(247,90,49)" rx="2" ry="2" />
+<text text-anchor="" x="13.00" y="943.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >MAIN.MAIN</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Wai.Handler.Warp.FileInfoCache.withFileInfoCache (857 samples, 85.70%)</title><rect x="110.3" y="725" width="1011.3" height="15.0" fill="rgb(218,149,27)" rx="2" ry="2" />
+<text text-anchor="" x="113.30" y="735.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Network.Wai.Handler.Warp.FileInfoCache.withFileInfoCache</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Database.Redis.Connection.createConnection (14 samples, 1.40%)</title><rect x="18.3" y="661" width="16.5" height="15.0" fill="rgb(227,104,25)" rx="2" ry="2" />
+<text text-anchor="" x="21.26" y="671.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Wai.Handler.Warp.RequestHeader.parseHeaderLines (1 samples, 0.10%)</title><rect x="904.4" y="533" width="1.2" height="15.0" fill="rgb(253,99,14)" rx="2" ry="2" />
+<text text-anchor="" x="907.44" y="543.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>UnliftIO.Exception.catchAny (78 samples, 7.80%)</title><rect x="15.9" y="789" width="92.0" height="15.0" fill="rgb(220,140,37)" rx="2" ry="2" />
+<text text-anchor="" x="18.90" y="799.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >UnliftIO.E..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Amazonka.Sign.V4.Base.canonicalHeaders (1 samples, 0.10%)</title><rect x="1134.5" y="533" width="1.2" height="15.0" fill="rgb(251,201,46)" rx="2" ry="2" />
+<text text-anchor="" x="1137.54" y="543.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Database.Redis.Commands.hgetall (1 samples, 0.10%)</title><rect x="1096.8" y="181" width="1.2" height="15.0" fill="rgb(240,71,36)" rx="2" ry="2" />
+<text text-anchor="" x="1099.78" y="191.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.HTTP.Client.TLS.mkManagerSettings (1 samples, 0.10%)</title><rect x="107.9" y="821" width="1.2" height="15.0" fill="rgb(232,164,28)" rx="2" ry="2" />
+<text text-anchor="" x="110.94" y="831.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Wai.Route.Tree.value (15 samples, 1.50%)</title><rect x="1028.3" y="293" width="17.7" height="15.0" fill="rgb(211,117,20)" rx="2" ry="2" />
+<text text-anchor="" x="1031.34" y="303.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>UnliftIO.Internals.Async.async (20 samples, 2.00%)</title><rect x="1121.6" y="885" width="23.6" height="15.0" fill="rgb(229,215,5)" rx="2" ry="2" />
+<text text-anchor="" x="1124.56" y="895.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >U..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Gundeck.Redis.HedisExtensions.checkedConnectCluster (671 samples, 67.10%)</title><rect x="111.5" y="485" width="791.8" height="15.0" fill="rgb(249,228,8)" rx="2" ry="2" />
+<text text-anchor="" x="114.48" y="495.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Gundeck.Redis.HedisExtensions.checkedConnectCluster</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Data.UUID.Types.Internal.fromASCIIBytes (1 samples, 0.10%)</title><rect x="1092.1" y="37" width="1.1" height="15.0" fill="rgb(249,166,12)" rx="2" ry="2" />
+<text text-anchor="" x="1095.06" y="47.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Gundeck.Presence.Data.toJSON (1 samples, 0.10%)</title><rect x="1042.5" y="149" width="1.2" height="15.0" fill="rgb(242,181,29)" rx="2" ry="2" />
+<text text-anchor="" x="1045.50" y="159.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Data.Aeson.Types.FromJSON.explicitParseField (16 samples, 1.60%)</title><rect x="1099.1" y="101" width="18.9" height="15.0" fill="rgb(228,184,33)" rx="2" ry="2" />
+<text text-anchor="" x="1102.14" y="111.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Data.Aeson.Parser.Internal.jstring (1 samples, 0.10%)</title><rect x="1098.0" y="133" width="1.1" height="15.0" fill="rgb(239,214,45)" rx="2" ry="2" />
+<text text-anchor="" x="1100.96" y="143.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.HTTP.Client.TLS.mkManagerSettingsContext (1 samples, 0.10%)</title><rect x="109.1" y="805" width="1.2" height="15.0" fill="rgb(215,101,11)" rx="2" ry="2" />
+<text text-anchor="" x="112.12" y="815.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Gundeck.Aws.&gt;&gt;= (19 samples, 1.90%)</title><rect x="1122.7" y="805" width="22.5" height="15.0" fill="rgb(247,23,36)" rx="2" ry="2" />
+<text text-anchor="" x="1125.74" y="815.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >G..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Gundeck.Presence.Data.readPresence (17 samples, 1.70%)</title><rect x="1098.0" y="181" width="20.0" height="15.0" fill="rgb(210,177,3)" rx="2" ry="2" />
+<text text-anchor="" x="1100.96" y="191.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Gundeck.Monad.&gt;&gt;= (48 samples, 4.80%)</title><rect x="971.7" y="197" width="56.6" height="15.0" fill="rgb(228,201,21)" rx="2" ry="2" />
+<text text-anchor="" x="974.70" y="207.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Gunde..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Data.Aeson.Encoding.Builder.null_ (1 samples, 0.10%)</title><rect x="1041.3" y="69" width="1.2" height="15.0" fill="rgb(209,38,19)" rx="2" ry="2" />
+<text text-anchor="" x="1044.32" y="79.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>UnliftIO.Exception.catchAny (856 samples, 85.60%)</title><rect x="111.5" y="581" width="1010.1" height="15.0" fill="rgb(223,54,43)" rx="2" ry="2" />
+<text text-anchor="" x="114.48" y="591.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >UnliftIO.Exception.catchAny</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Gundeck.Presence.add (43 samples, 4.30%)</title><rect x="1046.0" y="229" width="50.8" height="15.0" fill="rgb(222,165,29)" rx="2" ry="2" />
+<text text-anchor="" x="1049.04" y="239.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Gunde..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Gundeck.Aws.execute (20 samples, 2.00%)</title><rect x="1121.6" y="853" width="23.6" height="15.0" fill="rgb(231,194,44)" rx="2" ry="2" />
+<text text-anchor="" x="1124.56" y="863.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >G..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Amazonka.Sign.V4.Base.base (8 samples, 0.80%)</title><rect x="1132.2" y="565" width="9.4" height="15.0" fill="rgb(244,174,30)" rx="2" ry="2" />
+<text text-anchor="" x="1135.18" y="575.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Data.Schema.mkSchema (1 samples, 0.10%)</title><rect x="1092.1" y="85" width="1.1" height="15.0" fill="rgb(208,44,7)" rx="2" ry="2" />
+<text text-anchor="" x="1095.06" y="95.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Data.Aeson.Types.FromJSON.withText (32 samples, 3.20%)</title><rect x="1054.3" y="133" width="37.8" height="15.0" fill="rgb(219,171,36)" rx="2" ry="2" />
+<text text-anchor="" x="1057.30" y="143.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Dat..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Database.Redis.Cluster.nodes (20 samples, 2.00%)</title><rect x="72.5" y="581" width="23.6" height="15.0" fill="rgb(248,36,54)" rx="2" ry="2" />
+<text text-anchor="" x="75.54" y="591.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >D..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Wai.Utilities.Server.route (3 samples, 0.30%)</title><rect x="968.2" y="389" width="3.5" height="15.0" fill="rgb(224,208,17)" rx="2" ry="2" />
+<text text-anchor="" x="971.16" y="399.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Wai.Routing.Route.prepare (64 samples, 6.40%)</title><rect x="1046.0" y="277" width="75.6" height="15.0" fill="rgb(247,120,45)" rx="2" ry="2" />
+<text text-anchor="" x="1049.04" y="287.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Network...</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Wai.Routing.Route.prepare (51 samples, 5.10%)</title><rect x="908.0" y="373" width="60.2" height="15.0" fill="rgb(225,147,8)" rx="2" ry="2" />
+<text text-anchor="" x="910.98" y="383.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Networ..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Amazonka.Sign.V4.Base.canonicalPath (1 samples, 0.10%)</title><rect x="1135.7" y="533" width="1.2" height="15.0" fill="rgb(233,141,4)" rx="2" ry="2" />
+<text text-anchor="" x="1138.72" y="543.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Connection.initConnectionContext (1 samples, 0.10%)</title><rect x="13.5" y="725" width="1.2" height="15.0" fill="rgb(212,129,21)" rx="2" ry="2" />
+<text text-anchor="" x="16.54" y="735.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Data.ByteString.Conversion.To.runBuilder (2 samples, 0.20%)</title><rect x="1049.6" y="181" width="2.3" height="15.0" fill="rgb(208,77,5)" rx="2" ry="2" />
+<text text-anchor="" x="1052.58" y="191.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Amazonka.Sign.V4.Base.signature (1 samples, 0.10%)</title><rect x="1138.1" y="533" width="1.2" height="15.0" fill="rgb(236,140,36)" rx="2" ry="2" />
+<text text-anchor="" x="1141.08" y="543.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Gundeck.Redis.HedisExtensions.showsPrec (1 samples, 0.10%)</title><rect x="106.8" y="693" width="1.1" height="15.0" fill="rgb(252,204,20)" rx="2" ry="2" />
+<text text-anchor="" x="109.76" y="703.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Database.Redis.ConnectionContext.send (1 samples, 0.10%)</title><rect x="1030.7" y="117" width="1.2" height="15.0" fill="rgb(240,212,20)" rx="2" ry="2" />
+<text text-anchor="" x="1033.70" y="127.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Gundeck.Presence.Data.add.d (3 samples, 0.30%)</title><rect x="1040.1" y="181" width="3.6" height="15.0" fill="rgb(222,148,35)" rx="2" ry="2" />
+<text text-anchor="" x="1043.14" y="191.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.HTTP.Types.URI.urlEncode (40 samples, 4.00%)</title><rect x="918.6" y="341" width="47.2" height="15.0" fill="rgb(206,7,32)" rx="2" ry="2" />
+<text text-anchor="" x="921.60" y="351.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Netw..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Database.Redis.ConnectionContext.ioErrorToConnLost (1 samples, 0.10%)</title><rect x="1096.8" y="101" width="1.2" height="15.0" fill="rgb(232,143,35)" rx="2" ry="2" />
+<text text-anchor="" x="1099.78" y="111.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Wai.Utilities.Server.compile (15 samples, 1.50%)</title><rect x="1028.3" y="277" width="17.7" height="15.0" fill="rgb(221,221,7)" rx="2" ry="2" />
+<text text-anchor="" x="1031.34" y="287.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Data.ByteString.Conversion.To.runBuilder (2 samples, 0.20%)</title><rect x="1043.7" y="149" width="2.3" height="15.0" fill="rgb(229,94,41)" rx="2" ry="2" />
+<text text-anchor="" x="1046.68" y="159.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.HTTP.Types.URI.urlEncode (1 samples, 0.10%)</title><rect x="1135.7" y="501" width="1.2" height="15.0" fill="rgb(236,110,16)" rx="2" ry="2" />
+<text text-anchor="" x="1138.72" y="511.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Data.X509.CertificateStore.readCertificateStore (1 samples, 0.10%)</title><rect x="109.1" y="757" width="1.2" height="15.0" fill="rgb(251,77,50)" rx="2" ry="2" />
+<text text-anchor="" x="112.12" y="767.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Wai.Route.Tree.value (64 samples, 6.40%)</title><rect x="1046.0" y="309" width="75.6" height="15.0" fill="rgb(229,119,1)" rx="2" ry="2" />
+<text text-anchor="" x="1049.04" y="319.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Network...</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Control.Retry.resumeRecovering (77 samples, 7.70%)</title><rect x="15.9" y="725" width="90.9" height="15.0" fill="rgb(217,205,20)" rx="2" ry="2" />
+<text text-anchor="" x="18.90" y="735.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Control.Re..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Data.Metrics.Types.treeLookup.go (1 samples, 0.10%)</title><rect x="905.6" y="437" width="1.2" height="15.0" fill="rgb(249,92,32)" rx="2" ry="2" />
+<text text-anchor="" x="908.62" y="447.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Data.Aeson.Encoding.Internal.value (1 samples, 0.10%)</title><rect x="1041.3" y="149" width="1.2" height="15.0" fill="rgb(211,132,22)" rx="2" ry="2" />
+<text text-anchor="" x="1044.32" y="159.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Wai.Handler.Warp.Settings.defaultSettings (857 samples, 85.70%)</title><rect x="110.3" y="645" width="1011.3" height="15.0" fill="rgb(251,176,11)" rx="2" ry="2" />
+<text text-anchor="" x="113.30" y="655.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Network.Wai.Handler.Warp.Settings.defaultSettings</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.HTTP.Client.Types.mWrapException (3 samples, 0.30%)</title><rect x="1141.6" y="549" width="3.6" height="15.0" fill="rgb(239,141,11)" rx="2" ry="2" />
+<text text-anchor="" x="1144.62" y="559.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.HTTP.Client.Types.managerRawConnection (1 samples, 0.10%)</title><rect x="1121.6" y="661" width="1.1" height="15.0" fill="rgb(221,100,5)" rx="2" ry="2" />
+<text text-anchor="" x="1124.56" y="671.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Database.Redis.ConnectionContext.connect (36 samples, 3.60%)</title><rect x="860.8" y="437" width="42.5" height="15.0" fill="rgb(210,77,16)" rx="2" ry="2" />
+<text text-anchor="" x="863.78" y="447.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Data..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Data.Metrics.Middleware.Prometheus.waiPrometheusMiddleware (183 samples, 18.30%)</title><rect x="905.6" y="501" width="216.0" height="15.0" fill="rgb(251,85,49)" rx="2" ry="2" />
+<text text-anchor="" x="908.62" y="511.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Data.Metrics.Middleware.Prom..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Scanner.scanWith (1 samples, 0.10%)</title><rect x="1096.8" y="133" width="1.2" height="15.0" fill="rgb(213,163,3)" rx="2" ry="2" />
+<text text-anchor="" x="1099.78" y="143.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.HTTP.Client.TLS.tlsManagerSettings (1 samples, 0.10%)</title><rect x="14.7" y="773" width="1.2" height="15.0" fill="rgb(212,173,43)" rx="2" ry="2" />
+<text text-anchor="" x="17.72" y="783.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Data.Streaming.ByteString.Builder.Buffer.allNewBuffersStrategy (29 samples, 2.90%)</title><rect x="990.6" y="101" width="34.2" height="15.0" fill="rgb(224,90,24)" rx="2" ry="2" />
+<text text-anchor="" x="993.58" y="111.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Da..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Data.Attoparsec.ByteString.Lazy.parse (3 samples, 0.30%)</title><rect x="1093.2" y="197" width="3.6" height="15.0" fill="rgb(208,45,41)" rx="2" ry="2" />
+<text text-anchor="" x="1096.24" y="207.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Servant.Server.serveWithContext (127 samples, 12.70%)</title><rect x="971.7" y="389" width="149.9" height="15.0" fill="rgb(212,32,40)" rx="2" ry="2" />
+<text text-anchor="" x="974.70" y="399.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Servant.Server.serv..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Database.Redis.Core.sendRequest (1 samples, 0.10%)</title><rect x="1096.8" y="165" width="1.2" height="15.0" fill="rgb(238,222,39)" rx="2" ry="2" />
+<text text-anchor="" x="1099.78" y="175.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Scanner.Internal.scan (1 samples, 0.10%)</title><rect x="1039.0" y="101" width="1.1" height="15.0" fill="rgb(248,175,48)" rx="2" ry="2" />
+<text text-anchor="" x="1041.96" y="111.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.HTTP.Client.TLS.tlsManagerSettings (1 samples, 0.10%)</title><rect x="13.5" y="773" width="1.2" height="15.0" fill="rgb(220,69,32)" rx="2" ry="2" />
+<text text-anchor="" x="16.54" y="783.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Data.ByteString.Conversion.From.runParser (2 samples, 0.20%)</title><rect x="968.2" y="245" width="2.3" height="15.0" fill="rgb(218,27,14)" rx="2" ry="2" />
+<text text-anchor="" x="971.16" y="255.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Gundeck.API.Internal.sitemap (64 samples, 6.40%)</title><rect x="1046.0" y="261" width="75.6" height="15.0" fill="rgb(224,80,11)" rx="2" ry="2" />
+<text text-anchor="" x="1049.04" y="271.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Gundeck...</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Wai.Handler.Warp.Run.runSettings (857 samples, 85.70%)</title><rect x="110.3" y="869" width="1011.3" height="15.0" fill="rgb(208,221,29)" rx="2" ry="2" />
+<text text-anchor="" x="113.30" y="879.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Network.Wai.Handler.Warp.Run.runSettings</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Gundeck.Presence.list (21 samples, 2.10%)</title><rect x="1096.8" y="229" width="24.8" height="15.0" fill="rgb(241,94,27)" rx="2" ry="2" />
+<text text-anchor="" x="1099.78" y="239.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >G..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>System.X509.Unix.getSystemCertificateStore (1 samples, 0.10%)</title><rect x="109.1" y="773" width="1.2" height="15.0" fill="rgb(228,197,22)" rx="2" ry="2" />
+<text text-anchor="" x="112.12" y="783.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Data.Streaming.ByteString.Builder.newByteStringBuilderRecv (1 samples, 0.10%)</title><rect x="1026.0" y="117" width="1.2" height="15.0" fill="rgb(236,89,39)" rx="2" ry="2" />
+<text text-anchor="" x="1028.98" y="127.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Amazonka.Response.receiveXMLWrapper (8 samples, 0.80%)</title><rect x="1122.7" y="597" width="9.5" height="15.0" fill="rgb(221,212,41)" rx="2" ry="2" />
+<text text-anchor="" x="1125.74" y="607.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Wai.Utilities.Server.runSettingsWithShutdown (857 samples, 85.70%)</title><rect x="110.3" y="885" width="1011.3" height="15.0" fill="rgb(213,99,0)" rx="2" ry="2" />
+<text text-anchor="" x="113.30" y="895.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Network.Wai.Utilities.Server.runSettingsWithShutdown</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.HTTP.Client.Core.responseOpen (1 samples, 0.10%)</title><rect x="1121.6" y="709" width="1.1" height="15.0" fill="rgb(249,215,0)" rx="2" ry="2" />
+<text text-anchor="" x="1124.56" y="719.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Wai.Routing.Route.prepare (48 samples, 4.80%)</title><rect x="971.7" y="245" width="56.6" height="15.0" fill="rgb(253,33,11)" rx="2" ry="2" />
+<text text-anchor="" x="974.70" y="255.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Netwo..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Database.Redis.Connection.connectCluster (21 samples, 2.10%)</title><rect x="72.5" y="613" width="24.8" height="15.0" fill="rgb(234,62,2)" rx="2" ry="2" />
+<text text-anchor="" x="75.54" y="623.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >D..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Data.ByteString.Conversion.To.toByteString' (6 samples, 0.60%)</title><rect x="1046.0" y="213" width="7.1" height="15.0" fill="rgb(253,109,49)" rx="2" ry="2" />
+<text text-anchor="" x="1049.04" y="223.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Text.XML.Stream.Parse.parseTextPos (7 samples, 0.70%)</title><rect x="1122.7" y="501" width="8.3" height="15.0" fill="rgb(208,46,40)" rx="2" ry="2" />
+<text text-anchor="" x="1125.74" y="511.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Database.Redis.Cluster.Command.keysForRequest (1 samples, 0.10%)</title><rect x="1029.5" y="117" width="1.2" height="15.0" fill="rgb(218,5,39)" rx="2" ry="2" />
+<text text-anchor="" x="1032.52" y="127.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Wai.Routing.Route.routeWith (15 samples, 1.50%)</title><rect x="1028.3" y="309" width="17.7" height="15.0" fill="rgb(218,19,11)" rx="2" ry="2" />
+<text text-anchor="" x="1031.34" y="319.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Socket.Internal.throwSocketErrorCode (1 samples, 0.10%)</title><rect x="1121.6" y="517" width="1.1" height="15.0" fill="rgb(221,66,6)" rx="2" ry="2" />
+<text text-anchor="" x="1124.56" y="527.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Data.ByteString.Conversion.To.toByteString (6 samples, 0.60%)</title><rect x="1046.0" y="197" width="7.1" height="15.0" fill="rgb(229,157,3)" rx="2" ry="2" />
+<text text-anchor="" x="1049.04" y="207.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.HTTP.Client.TLS.mkManagerSettings (1 samples, 0.10%)</title><rect x="13.5" y="757" width="1.2" height="15.0" fill="rgb(234,190,36)" rx="2" ry="2" />
+<text text-anchor="" x="16.54" y="767.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Gundeck.Redis.connectRobust.logEx (1 samples, 0.10%)</title><rect x="106.8" y="725" width="1.1" height="15.0" fill="rgb(216,133,38)" rx="2" ry="2" />
+<text text-anchor="" x="109.76" y="735.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Gundeck.Types.Common.parse (15 samples, 1.50%)</title><rect x="1100.3" y="69" width="17.7" height="15.0" fill="rgb(228,41,31)" rx="2" ry="2" />
+<text text-anchor="" x="1103.32" y="79.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Control.Retry.resumeRecoveringDynamic (671 samples, 67.10%)</title><rect x="111.5" y="501" width="791.8" height="15.0" fill="rgb(212,15,51)" rx="2" ry="2" />
+<text text-anchor="" x="114.48" y="511.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Control.Retry.resumeRecoveringDynamic</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Gundeck.Aws.send (19 samples, 1.90%)</title><rect x="1122.7" y="709" width="22.5" height="15.0" fill="rgb(230,86,39)" rx="2" ry="2" />
+<text text-anchor="" x="1125.74" y="719.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >G..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Amazonka.HTTP.httpRequest (1 samples, 0.10%)</title><rect x="1121.6" y="773" width="1.1" height="15.0" fill="rgb(225,145,15)" rx="2" ry="2" />
+<text text-anchor="" x="1124.56" y="783.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.HTTP.Client.Types.mWrapException (1 samples, 0.10%)</title><rect x="1121.6" y="693" width="1.1" height="15.0" fill="rgb(211,26,31)" rx="2" ry="2" />
+<text text-anchor="" x="1124.56" y="703.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Wai.Middleware.Gzip.gzip (48 samples, 4.80%)</title><rect x="971.7" y="165" width="56.6" height="15.0" fill="rgb(217,192,19)" rx="2" ry="2" />
+<text text-anchor="" x="974.70" y="175.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Netwo..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Data.Aeson.Types.FromJSON..: (33 samples, 3.30%)</title><rect x="1054.3" y="165" width="38.9" height="15.0" fill="rgb(211,207,26)" rx="2" ry="2" />
+<text text-anchor="" x="1057.30" y="175.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Dat..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Wai.Routing.Predicate.capture (2 samples, 0.20%)</title><rect x="968.2" y="277" width="2.3" height="15.0" fill="rgb(222,177,38)" rx="2" ry="2" />
+<text text-anchor="" x="971.16" y="287.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Wai.Handler.Warp.Run.serveConnection (856 samples, 85.60%)</title><rect x="111.5" y="613" width="1010.1" height="15.0" fill="rgb(250,35,47)" rx="2" ry="2" />
+<text text-anchor="" x="114.48" y="623.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Network.Wai.Handler.Warp.Run.serveConnection</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Text.XML.fromEvents (1 samples, 0.10%)</title><rect x="1131.0" y="517" width="1.2" height="15.0" fill="rgb(244,152,11)" rx="2" ry="2" />
+<text text-anchor="" x="1134.00" y="527.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Gundeck.Aws.listen (19 samples, 1.90%)</title><rect x="1122.7" y="821" width="22.5" height="15.0" fill="rgb(236,197,6)" rx="2" ry="2" />
+<text text-anchor="" x="1125.74" y="831.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >G..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Data.Aeson.Encoding.Builder.text (1 samples, 0.10%)</title><rect x="1119.2" y="117" width="1.2" height="15.0" fill="rgb(240,44,9)" rx="2" ry="2" />
+<text text-anchor="" x="1122.20" y="127.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Gundeck.Presence.add (15 samples, 1.50%)</title><rect x="1028.3" y="213" width="17.7" height="15.0" fill="rgb(215,140,18)" rx="2" ry="2" />
+<text text-anchor="" x="1031.34" y="223.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Database.Redis.ConnectionContext.ioErrorToConnLost (1 samples, 0.10%)</title><rect x="1030.7" y="101" width="1.2" height="15.0" fill="rgb(232,123,9)" rx="2" ry="2" />
+<text text-anchor="" x="1033.70" y="111.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Wai.Route.Tree.segments (2 samples, 0.20%)</title><rect x="965.8" y="341" width="2.4" height="15.0" fill="rgb(241,165,35)" rx="2" ry="2" />
+<text text-anchor="" x="968.80" y="351.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Gundeck.Run.run (959 samples, 95.90%)</title><rect x="13.5" y="901" width="1131.7" height="15.0" fill="rgb(227,152,46)" rx="2" ry="2" />
+<text text-anchor="" x="16.54" y="911.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Gundeck.Run.run</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Database.Redis.Cluster.connect (21 samples, 2.10%)</title><rect x="72.5" y="597" width="24.8" height="15.0" fill="rgb(209,173,40)" rx="2" ry="2" />
+<text text-anchor="" x="75.54" y="607.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >D..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Amazonka.Send.sendEither (1 samples, 0.10%)</title><rect x="1121.6" y="805" width="1.1" height="15.0" fill="rgb(226,110,16)" rx="2" ry="2" />
+<text text-anchor="" x="1124.56" y="815.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Control.Concurrent.Async.async (20 samples, 2.00%)</title><rect x="1121.6" y="869" width="23.6" height="15.0" fill="rgb(229,164,54)" rx="2" ry="2" />
+<text text-anchor="" x="1124.56" y="879.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >C..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Wai.Handler.Warp.Run.runSettingsConnectionMakerSecure (857 samples, 85.70%)</title><rect x="110.3" y="789" width="1011.3" height="15.0" fill="rgb(233,153,1)" rx="2" ry="2" />
+<text text-anchor="" x="113.30" y="799.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Network.Wai.Handler.Warp.Run.runSettingsConnectionMakerSecure</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Data.X509.CertificateStore.readCertificates (1 samples, 0.10%)</title><rect x="13.5" y="677" width="1.2" height="15.0" fill="rgb(222,72,18)" rx="2" ry="2" />
+<text text-anchor="" x="16.54" y="687.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Data.Attoparsec.ByteString.Internal.match (2 samples, 0.20%)</title><rect x="968.2" y="229" width="2.3" height="15.0" fill="rgb(235,141,13)" rx="2" ry="2" />
+<text text-anchor="" x="971.16" y="239.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Gundeck.Redis.connectRobust.retry.\ (7 samples, 0.70%)</title><rect x="98.5" y="693" width="8.3" height="15.0" fill="rgb(242,70,48)" rx="2" ry="2" />
+<text text-anchor="" x="101.50" y="703.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Data.X509.CertificateStore.readCertificateStore (1 samples, 0.10%)</title><rect x="107.9" y="757" width="1.2" height="15.0" fill="rgb(238,202,10)" rx="2" ry="2" />
+<text text-anchor="" x="110.94" y="767.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Servant.Server.serveWithContextT (127 samples, 12.70%)</title><rect x="971.7" y="373" width="149.9" height="15.0" fill="rgb(247,116,44)" rx="2" ry="2" />
+<text text-anchor="" x="974.70" y="383.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Servant.Server.serv..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.HTTP.Conduit.http (3 samples, 0.30%)</title><rect x="1141.6" y="597" width="3.6" height="15.0" fill="rgb(245,178,50)" rx="2" ry="2" />
+<text text-anchor="" x="1144.62" y="607.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Gundeck.Presence.list (1 samples, 0.10%)</title><rect x="970.5" y="277" width="1.2" height="15.0" fill="rgb(253,179,1)" rx="2" ry="2" />
+<text text-anchor="" x="973.52" y="287.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Amazonka.Response.receiveXML (8 samples, 0.80%)</title><rect x="1122.7" y="581" width="9.5" height="15.0" fill="rgb(221,131,42)" rx="2" ry="2" />
+<text text-anchor="" x="1125.74" y="591.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Data.X509.CertificateStore.readCertificates (1 samples, 0.10%)</title><rect x="107.9" y="741" width="1.2" height="15.0" fill="rgb(209,225,44)" rx="2" ry="2" />
+<text text-anchor="" x="110.94" y="751.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Text.XML.Unresolved.fromEvents (1 samples, 0.10%)</title><rect x="1131.0" y="501" width="1.2" height="15.0" fill="rgb(242,61,52)" rx="2" ry="2" />
+<text text-anchor="" x="1134.00" y="511.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Database.Redis.Transactions.multiExec (10 samples, 1.00%)</title><rect x="1028.3" y="165" width="11.8" height="15.0" fill="rgb(248,45,15)" rx="2" ry="2" />
+<text text-anchor="" x="1031.34" y="175.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Socket.Syscall.connect (1 samples, 0.10%)</title><rect x="1121.6" y="581" width="1.1" height="15.0" fill="rgb(237,8,23)" rx="2" ry="2" />
+<text text-anchor="" x="1124.56" y="591.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.URI.uriToString (1 samples, 0.10%)</title><rect x="1051.9" y="181" width="1.2" height="15.0" fill="rgb(217,225,22)" rx="2" ry="2" />
+<text text-anchor="" x="1054.94" y="191.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Gundeck.Redis.connectRobust.retry (78 samples, 7.80%)</title><rect x="15.9" y="757" width="92.0" height="15.0" fill="rgb(230,33,30)" rx="2" ry="2" />
+<text text-anchor="" x="18.90" y="767.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Gundeck.Re..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Wai.Utilities.Response.json (3 samples, 0.30%)</title><rect x="1118.0" y="213" width="3.6" height="15.0" fill="rgb(247,148,33)" rx="2" ry="2" />
+<text text-anchor="" x="1121.02" y="223.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Gundeck.Run.mkApp.runGundeckWithRoutes (127 samples, 12.70%)</title><rect x="971.7" y="357" width="149.9" height="15.0" fill="rgb(234,13,49)" rx="2" ry="2" />
+<text text-anchor="" x="974.70" y="367.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Gundeck.Run.mkApp.r..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Wai.Middleware.Prometheus.instrumentHandlerValueWithFilter (181 samples, 18.10%)</title><rect x="908.0" y="469" width="213.6" height="15.0" fill="rgb(225,101,25)" rx="2" ry="2" />
+<text text-anchor="" x="910.98" y="479.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Network.Wai.Middleware.Prome..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Gundeck.Presence.Data.list' (18 samples, 1.80%)</title><rect x="1096.8" y="197" width="21.2" height="15.0" fill="rgb(224,59,49)" rx="2" ry="2" />
+<text text-anchor="" x="1099.78" y="207.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >G..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Gundeck.Env.createEnv (82 samples, 8.20%)</title><rect x="13.5" y="885" width="96.8" height="15.0" fill="rgb(238,229,49)" rx="2" ry="2" />
+<text text-anchor="" x="16.54" y="895.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Gundeck.Env..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Data.Hashable.Class.defaultHashWithSalt (3 samples, 0.30%)</title><rect x="132.7" y="357" width="3.6" height="15.0" fill="rgb(212,46,31)" rx="2" ry="2" />
+<text text-anchor="" x="135.72" y="367.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Database.Redis.ProtocolPipelining.beginReceiving (14 samples, 1.40%)</title><rect x="18.3" y="645" width="16.5" height="15.0" fill="rgb(209,128,26)" rx="2" ry="2" />
+<text text-anchor="" x="21.26" y="655.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Gundeck.Env.createRedisPool.connectWithRetry (78 samples, 7.80%)</title><rect x="15.9" y="853" width="92.0" height="15.0" fill="rgb(225,201,33)" rx="2" ry="2" />
+<text text-anchor="" x="18.90" y="863.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Gundeck.En..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Gundeck.Aws.mkEnv.mkAwsEnv (2 samples, 0.20%)</title><rect x="13.5" y="853" width="2.4" height="15.0" fill="rgb(233,67,48)" rx="2" ry="2" />
+<text text-anchor="" x="16.54" y="863.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Amazonka.HTTP.httpRequest (19 samples, 1.90%)</title><rect x="1122.7" y="629" width="22.5" height="15.0" fill="rgb(223,181,31)" rx="2" ry="2" />
+<text text-anchor="" x="1125.74" y="639.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >A..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Data.Schema.schemaIn (1 samples, 0.10%)</title><rect x="1092.1" y="117" width="1.1" height="15.0" fill="rgb(250,181,19)" rx="2" ry="2" />
+<text text-anchor="" x="1095.06" y="127.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.URI.uriToString (1 samples, 0.10%)</title><rect x="1120.4" y="181" width="1.2" height="15.0" fill="rgb(207,3,18)" rx="2" ry="2" />
+<text text-anchor="" x="1123.38" y="191.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Data.HashMap.Internal.insert' (1 samples, 0.10%)</title><rect x="917.4" y="309" width="1.2" height="15.0" fill="rgb(253,108,31)" rx="2" ry="2" />
+<text text-anchor="" x="920.42" y="319.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Connection.initConnectionContext (1 samples, 0.10%)</title><rect x="107.9" y="789" width="1.2" height="15.0" fill="rgb(232,54,23)" rx="2" ry="2" />
+<text text-anchor="" x="110.94" y="799.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>UnliftIO.Exception.handle (19 samples, 1.90%)</title><rect x="1122.7" y="757" width="22.5" height="15.0" fill="rgb(214,169,33)" rx="2" ry="2" />
+<text text-anchor="" x="1125.74" y="767.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >U..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Data.Aeson.Parser.Internal.value' (1 samples, 0.10%)</title><rect x="1098.0" y="149" width="1.1" height="15.0" fill="rgb(243,199,0)" rx="2" ry="2" />
+<text text-anchor="" x="1100.96" y="159.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Gundeck.Presence.Data.list (1 samples, 0.10%)</title><rect x="970.5" y="261" width="1.2" height="15.0" fill="rgb(247,211,17)" rx="2" ry="2" />
+<text text-anchor="" x="973.52" y="271.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Socket.Info.getAddrInfo (3 samples, 0.30%)</title><rect x="898.5" y="421" width="3.6" height="15.0" fill="rgb(216,81,50)" rx="2" ry="2" />
+<text text-anchor="" x="901.54" y="431.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Data.Conduit.Attoparsec.conduitParser (5 samples, 0.50%)</title><rect x="1125.1" y="469" width="5.9" height="15.0" fill="rgb(238,17,10)" rx="2" ry="2" />
+<text text-anchor="" x="1128.10" y="479.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Wai.Routing.Route.addRoute (1 samples, 0.10%)</title><rect x="970.5" y="293" width="1.2" height="15.0" fill="rgb(248,116,22)" rx="2" ry="2" />
+<text text-anchor="" x="973.52" y="303.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.HTTP.Client.TLS.mkManagerSettingsContext (1 samples, 0.10%)</title><rect x="14.7" y="741" width="1.2" height="15.0" fill="rgb(219,44,4)" rx="2" ry="2" />
+<text text-anchor="" x="17.72" y="751.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Gundeck.Redis.safeForever (78 samples, 7.80%)</title><rect x="15.9" y="805" width="92.0" height="15.0" fill="rgb(237,55,3)" rx="2" ry="2" />
+<text text-anchor="" x="18.90" y="815.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Gundeck.Re..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Wai.Handler.Warp.Run.runSettingsConnection (857 samples, 85.70%)</title><rect x="110.3" y="821" width="1011.3" height="15.0" fill="rgb(254,120,4)" rx="2" ry="2" />
+<text text-anchor="" x="113.30" y="831.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Network.Wai.Handler.Warp.Run.runSettingsConnection</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.URI.uriToString (1 samples, 0.10%)</title><rect x="1042.5" y="133" width="1.2" height="15.0" fill="rgb(225,3,1)" rx="2" ry="2" />
+<text text-anchor="" x="1045.50" y="143.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Gundeck.Presence.Data.list (18 samples, 1.80%)</title><rect x="1096.8" y="213" width="21.2" height="15.0" fill="rgb(243,5,40)" rx="2" ry="2" />
+<text text-anchor="" x="1099.78" y="223.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >G..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Gundeck.Redis.connectRobust.retry.\ (1 samples, 0.10%)</title><rect x="106.8" y="741" width="1.1" height="15.0" fill="rgb(251,48,26)" rx="2" ry="2" />
+<text text-anchor="" x="109.76" y="751.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Data.Aeson.Encoding.Builder.object (1 samples, 0.10%)</title><rect x="1041.3" y="117" width="1.2" height="15.0" fill="rgb(240,40,27)" rx="2" ry="2" />
+<text text-anchor="" x="1044.32" y="127.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.HTTP.Client.Manager.newManager (2 samples, 0.20%)</title><rect x="107.9" y="869" width="2.4" height="15.0" fill="rgb(254,30,42)" rx="2" ry="2" />
+<text text-anchor="" x="110.94" y="879.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Data.Aeson.Encoding.Builder.text (1 samples, 0.10%)</title><rect x="1041.3" y="101" width="1.2" height="15.0" fill="rgb(243,111,13)" rx="2" ry="2" />
+<text text-anchor="" x="1044.32" y="111.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Database.Redis.Cluster.nodes (614 samples, 61.40%)</title><rect x="136.3" y="437" width="724.5" height="15.0" fill="rgb(223,85,38)" rx="2" ry="2" />
+<text text-anchor="" x="139.26" y="447.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Database.Redis.Cluster.nodes</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>UNKNOWN (38 samples, 3.80%)</title><rect x="1145.2" y="933" width="44.8" height="15.0" fill="rgb(252,172,24)" rx="2" ry="2" />
+<text text-anchor="" x="1148.16" y="943.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >UNKN..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Gundeck.Aws.mkEnv (2 samples, 0.20%)</title><rect x="13.5" y="869" width="2.4" height="15.0" fill="rgb(254,224,29)" rx="2" ry="2" />
+<text text-anchor="" x="16.54" y="879.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Amazonka.Types.withAuth (8 samples, 0.80%)</title><rect x="1132.2" y="597" width="9.4" height="15.0" fill="rgb(229,216,11)" rx="2" ry="2" />
+<text text-anchor="" x="1135.18" y="607.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Text.XML.Stream.Parse.parseBytesPos (7 samples, 0.70%)</title><rect x="1122.7" y="517" width="8.3" height="15.0" fill="rgb(254,206,13)" rx="2" ry="2" />
+<text text-anchor="" x="1125.74" y="527.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.HTTP.Client.Core.responseOpen (3 samples, 0.30%)</title><rect x="1141.6" y="565" width="3.6" height="15.0" fill="rgb(218,23,54)" rx="2" ry="2" />
+<text text-anchor="" x="1144.62" y="575.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Gundeck.Env.createEnv (3 samples, 0.30%)</title><rect x="1141.6" y="533" width="3.6" height="15.0" fill="rgb(224,71,1)" rx="2" ry="2" />
+<text text-anchor="" x="1144.62" y="543.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Wai.Route.Tree.fromList (44 samples, 4.40%)</title><rect x="916.2" y="357" width="52.0" height="15.0" fill="rgb(238,91,18)" rx="2" ry="2" />
+<text text-anchor="" x="919.24" y="367.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Netwo..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Scanner.scanWith (5 samples, 0.50%)</title><rect x="1034.2" y="117" width="5.9" height="15.0" fill="rgb(211,91,33)" rx="2" ry="2" />
+<text text-anchor="" x="1037.24" y="127.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Wai.Handler.Warp.Settings.settingsFork (857 samples, 85.70%)</title><rect x="110.3" y="661" width="1011.3" height="15.0" fill="rgb(229,48,23)" rx="2" ry="2" />
+<text text-anchor="" x="113.30" y="671.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Network.Wai.Handler.Warp.Settings.settingsFork</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.HTTP.Client.Types.managerWrapException (3 samples, 0.30%)</title><rect x="1141.6" y="501" width="3.6" height="15.0" fill="rgb(250,55,19)" rx="2" ry="2" />
+<text text-anchor="" x="1144.62" y="511.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Data.Aeson.Encoding.Builder.unquoted (1 samples, 0.10%)</title><rect x="1119.2" y="101" width="1.2" height="15.0" fill="rgb(241,26,5)" rx="2" ry="2" />
+<text text-anchor="" x="1122.20" y="111.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Gundeck.Monad.runGundeck (63 samples, 6.30%)</title><rect x="971.7" y="341" width="74.3" height="15.0" fill="rgb(215,35,23)" rx="2" ry="2" />
+<text text-anchor="" x="974.70" y="351.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Gundeck...</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Data.Aeson.Types.FromJSON..: (16 samples, 1.60%)</title><rect x="1099.1" y="117" width="18.9" height="15.0" fill="rgb(238,141,11)" rx="2" ry="2" />
+<text text-anchor="" x="1102.14" y="127.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Wai.Utilities.Server.route (48 samples, 4.80%)</title><rect x="971.7" y="309" width="56.6" height="15.0" fill="rgb(219,206,0)" rx="2" ry="2" />
+<text text-anchor="" x="974.70" y="319.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Netwo..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Gundeck.Presence.Data.add (5 samples, 0.50%)</title><rect x="1040.1" y="197" width="5.9" height="15.0" fill="rgb(222,171,39)" rx="2" ry="2" />
+<text text-anchor="" x="1043.14" y="207.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.HTTP.Client.Manager.defaultManagerSettings (1 samples, 0.10%)</title><rect x="1121.6" y="645" width="1.1" height="15.0" fill="rgb(205,196,17)" rx="2" ry="2" />
+<text text-anchor="" x="1124.56" y="655.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Gundeck.Monad.&gt;&gt;= (10 samples, 1.00%)</title><rect x="1028.3" y="197" width="11.8" height="15.0" fill="rgb(213,17,36)" rx="2" ry="2" />
+<text text-anchor="" x="1031.34" y="207.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Wai.Handler.Warp.Request.headerLines (1 samples, 0.10%)</title><rect x="903.3" y="533" width="1.1" height="15.0" fill="rgb(233,104,36)" rx="2" ry="2" />
+<text text-anchor="" x="906.26" y="543.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Database.Redis.ConnectionContext.connect (1 samples, 0.10%)</title><rect x="96.1" y="581" width="1.2" height="15.0" fill="rgb(248,79,7)" rx="2" ry="2" />
+<text text-anchor="" x="99.14" y="591.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Socket.Types.withSocketAddress (1 samples, 0.10%)</title><rect x="1121.6" y="565" width="1.1" height="15.0" fill="rgb(248,166,50)" rx="2" ry="2" />
+<text text-anchor="" x="1124.56" y="575.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.HTTP.Types.URI.urlEncodeBuilder (7 samples, 0.70%)</title><rect x="957.5" y="325" width="8.3" height="15.0" fill="rgb(232,209,54)" rx="2" ry="2" />
+<text text-anchor="" x="960.54" y="335.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Gundeck.Redis.HedisExtensions.parseClusterInfoResponse (1 samples, 0.10%)</title><rect x="97.3" y="581" width="1.2" height="15.0" fill="rgb(214,155,54)" rx="2" ry="2" />
+<text text-anchor="" x="100.32" y="591.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Wai.Utilities.Server.catchErrors (181 samples, 18.10%)</title><rect x="908.0" y="453" width="213.6" height="15.0" fill="rgb(217,227,47)" rx="2" ry="2" />
+<text text-anchor="" x="910.98" y="463.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Network.Wai.Utilities.Server..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Control.Retry.recovering (671 samples, 67.10%)</title><rect x="111.5" y="533" width="791.8" height="15.0" fill="rgb(250,46,25)" rx="2" ry="2" />
+<text text-anchor="" x="114.48" y="543.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Control.Retry.recovering</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Control.Retry.recovering (77 samples, 7.70%)</title><rect x="15.9" y="741" width="90.9" height="15.0" fill="rgb(214,53,6)" rx="2" ry="2" />
+<text text-anchor="" x="18.90" y="751.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Control.Re..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Data.Schema.schemaParseJSON (1 samples, 0.10%)</title><rect x="1092.1" y="133" width="1.1" height="15.0" fill="rgb(240,181,20)" rx="2" ry="2" />
+<text text-anchor="" x="1095.06" y="143.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Wai.Utilities.Request.parseBody (37 samples, 3.70%)</title><rect x="1053.1" y="213" width="43.7" height="15.0" fill="rgb(220,205,53)" rx="2" ry="2" />
+<text text-anchor="" x="1056.12" y="223.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Netw..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Text.XML.sinkDoc (8 samples, 0.80%)</title><rect x="1122.7" y="533" width="9.5" height="15.0" fill="rgb(249,223,27)" rx="2" ry="2" />
+<text text-anchor="" x="1125.74" y="543.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Gundeck.Redis.HedisExtensions.decode (1 samples, 0.10%)</title><rect x="97.3" y="597" width="1.2" height="15.0" fill="rgb(221,173,23)" rx="2" ry="2" />
+<text text-anchor="" x="100.32" y="607.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Socket.Types.withSocketAddress (1 samples, 0.10%)</title><rect x="902.1" y="389" width="1.2" height="15.0" fill="rgb(254,187,50)" rx="2" ry="2" />
+<text text-anchor="" x="905.08" y="399.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Blaze.ByteString.Builder.toByteStringIOWith (3 samples, 0.30%)</title><rect x="1141.6" y="421" width="3.6" height="15.0" fill="rgb(227,175,13)" rx="2" ry="2" />
+<text text-anchor="" x="1144.62" y="431.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Amazonka.HTTP.retryRequest (19 samples, 1.90%)</title><rect x="1122.7" y="645" width="22.5" height="15.0" fill="rgb(245,45,17)" rx="2" ry="2" />
+<text text-anchor="" x="1125.74" y="655.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >A..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Database.Redis.Connection.shardMapFromClusterSlotsResponse (31 samples, 3.10%)</title><rect x="34.8" y="661" width="36.6" height="15.0" fill="rgb(225,229,20)" rx="2" ry="2" />
+<text text-anchor="" x="37.78" y="671.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Dat..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Wai.Routing.Route.prepare (3 samples, 0.30%)</title><rect x="968.2" y="325" width="3.5" height="15.0" fill="rgb(216,62,8)" rx="2" ry="2" />
+<text text-anchor="" x="971.16" y="335.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Database.Redis.ConnectionContext.disconnect (1 samples, 0.10%)</title><rect x="17.1" y="629" width="1.2" height="15.0" fill="rgb(228,205,29)" rx="2" ry="2" />
+<text text-anchor="" x="20.08" y="639.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.HTTP.Client.TLS.mkManagerSettings (1 samples, 0.10%)</title><rect x="14.7" y="757" width="1.2" height="15.0" fill="rgb(241,5,33)" rx="2" ry="2" />
+<text text-anchor="" x="17.72" y="767.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Socket.Syscall.connect (1 samples, 0.10%)</title><rect x="902.1" y="405" width="1.2" height="15.0" fill="rgb(228,153,53)" rx="2" ry="2" />
+<text text-anchor="" x="905.08" y="415.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.URI.parseURI (30 samples, 3.00%)</title><rect x="1056.7" y="101" width="35.4" height="15.0" fill="rgb(214,19,33)" rx="2" ry="2" />
+<text text-anchor="" x="1059.66" y="111.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Net..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Wai.Handler.Warp.FdCache.withFdCache (857 samples, 85.70%)</title><rect x="110.3" y="741" width="1011.3" height="15.0" fill="rgb(215,40,29)" rx="2" ry="2" />
+<text text-anchor="" x="113.30" y="751.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Network.Wai.Handler.Warp.FdCache.withFdCache</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Data.Streaming.ByteString.Builder.newByteStringBuilderRecv (30 samples, 3.00%)</title><rect x="989.4" y="133" width="35.4" height="15.0" fill="rgb(251,200,48)" rx="2" ry="2" />
+<text text-anchor="" x="992.40" y="143.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Da..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Socket.Handle.socketToHandle (31 samples, 3.10%)</title><rect x="862.0" y="421" width="36.5" height="15.0" fill="rgb(243,211,29)" rx="2" ry="2" />
+<text text-anchor="" x="864.96" y="431.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Net..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Crypto.MAC.HMAC.hmac (1 samples, 0.10%)</title><rect x="1138.1" y="501" width="1.2" height="15.0" fill="rgb(251,134,15)" rx="2" ry="2" />
+<text text-anchor="" x="1141.08" y="511.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.HTTP.Client.Manager.newManager (1 samples, 0.10%)</title><rect x="1121.6" y="677" width="1.1" height="15.0" fill="rgb(252,19,50)" rx="2" ry="2" />
+<text text-anchor="" x="1124.56" y="687.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Database.Redis.ConnectionContext.recv (3 samples, 0.30%)</title><rect x="18.3" y="597" width="3.5" height="15.0" fill="rgb(227,188,26)" rx="2" ry="2" />
+<text text-anchor="" x="21.26" y="607.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Wai.Utilities.Server.rethrow5xx (181 samples, 18.10%)</title><rect x="908.0" y="437" width="213.6" height="15.0" fill="rgb(224,138,51)" rx="2" ry="2" />
+<text text-anchor="" x="910.98" y="447.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Network.Wai.Utilities.Server..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Wai.Handler.Warp.Run.withII (857 samples, 85.70%)</title><rect x="110.3" y="773" width="1011.3" height="15.0" fill="rgb(241,53,18)" rx="2" ry="2" />
+<text text-anchor="" x="113.30" y="783.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Network.Wai.Handler.Warp.Run.withII</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Database.Redis.Connection.connectCluster (48 samples, 4.80%)</title><rect x="15.9" y="677" width="56.6" height="15.0" fill="rgb(208,180,21)" rx="2" ry="2" />
+<text text-anchor="" x="18.90" y="687.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Datab..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Scanner.Internal.scan (11 samples, 1.10%)</title><rect x="21.8" y="613" width="13.0" height="15.0" fill="rgb(206,131,41)" rx="2" ry="2" />
+<text text-anchor="" x="24.80" y="623.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Wai.Routing.Route.addRoute (64 samples, 6.40%)</title><rect x="1046.0" y="245" width="75.6" height="15.0" fill="rgb(248,121,35)" rx="2" ry="2" />
+<text text-anchor="" x="1049.04" y="255.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Network...</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Amazonka.Send.send (1 samples, 0.10%)</title><rect x="1121.6" y="821" width="1.1" height="15.0" fill="rgb(226,5,36)" rx="2" ry="2" />
+<text text-anchor="" x="1124.56" y="831.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Data.UUID.Types.Internal.fromText (1 samples, 0.10%)</title><rect x="1092.1" y="53" width="1.1" height="15.0" fill="rgb(234,228,50)" rx="2" ry="2" />
+<text text-anchor="" x="1095.06" y="63.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Data.Aeson.Encoding.Internal.openBracket (1 samples, 0.10%)</title><rect x="1119.2" y="181" width="1.2" height="15.0" fill="rgb(209,161,30)" rx="2" ry="2" />
+<text text-anchor="" x="1122.20" y="191.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Data.Hashable.Class.hashWithSalt1 (3 samples, 0.30%)</title><rect x="132.7" y="373" width="3.6" height="15.0" fill="rgb(218,172,48)" rx="2" ry="2" />
+<text text-anchor="" x="135.72" y="383.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Data.Aeson.Encoding.Builder.unquoted (1 samples, 0.10%)</title><rect x="1041.3" y="85" width="1.2" height="15.0" fill="rgb(246,194,25)" rx="2" ry="2" />
+<text text-anchor="" x="1044.32" y="95.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Database.Redis.Cluster.connect (671 samples, 67.10%)</title><rect x="111.5" y="453" width="791.8" height="15.0" fill="rgb(212,49,17)" rx="2" ry="2" />
+<text text-anchor="" x="114.48" y="463.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Database.Redis.Cluster.connect</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Wai.Routing.Route.routeWith (48 samples, 4.80%)</title><rect x="971.7" y="293" width="56.6" height="15.0" fill="rgb(224,61,19)" rx="2" ry="2" />
+<text text-anchor="" x="974.70" y="303.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Netwo..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Control.Concurrent.Async.async (78 samples, 7.80%)</title><rect x="15.9" y="821" width="92.0" height="15.0" fill="rgb(219,51,50)" rx="2" ry="2" />
+<text text-anchor="" x="18.90" y="831.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Control.Co..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>UnliftIO.Exception.mask_ (857 samples, 85.70%)</title><rect x="110.3" y="693" width="1011.3" height="15.0" fill="rgb(232,192,44)" rx="2" ry="2" />
+<text text-anchor="" x="113.30" y="703.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >UnliftIO.Exception.mask_</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.HTTP.Client.Types.managerTlsProxyConnection (1 samples, 0.10%)</title><rect x="14.7" y="789" width="1.2" height="15.0" fill="rgb(240,189,28)" rx="2" ry="2" />
+<text text-anchor="" x="17.72" y="799.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Data.ByteString.Conversion.To.runBuilder (1 samples, 0.10%)</title><rect x="970.5" y="213" width="1.2" height="15.0" fill="rgb(224,21,45)" rx="2" ry="2" />
+<text text-anchor="" x="973.52" y="223.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Data.HashMap.Internal.Strict.fromList (9 samples, 0.90%)</title><rect x="125.6" y="421" width="10.7" height="15.0" fill="rgb(253,85,29)" rx="2" ry="2" />
+<text text-anchor="" x="128.64" y="431.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Data.HashMap.Internal.Strict.insert (1 samples, 0.10%)</title><rect x="917.4" y="341" width="1.2" height="15.0" fill="rgb(235,85,38)" rx="2" ry="2" />
+<text text-anchor="" x="920.42" y="351.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Database.Redis.Core.sendRequest (10 samples, 1.00%)</title><rect x="1028.3" y="149" width="11.8" height="15.0" fill="rgb(247,171,16)" rx="2" ry="2" />
+<text text-anchor="" x="1031.34" y="159.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Database.Redis.Connection.connectCluster (671 samples, 67.10%)</title><rect x="111.5" y="469" width="791.8" height="15.0" fill="rgb(213,180,14)" rx="2" ry="2" />
+<text text-anchor="" x="114.48" y="479.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Database.Redis.Connection.connectCluster</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Data.Aeson.Parser.Internal.jsonEOF' (3 samples, 0.30%)</title><rect x="1093.2" y="181" width="3.6" height="15.0" fill="rgb(215,190,30)" rx="2" ry="2" />
+<text text-anchor="" x="1096.24" y="191.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Wai.Handler.Warp.Run.acceptConnection (857 samples, 85.70%)</title><rect x="110.3" y="709" width="1011.3" height="15.0" fill="rgb(220,47,34)" rx="2" ry="2" />
+<text text-anchor="" x="113.30" y="719.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Network.Wai.Handler.Warp.Run.acceptConnection</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Wai.Routing.Route.routeWith (64 samples, 6.40%)</title><rect x="1046.0" y="325" width="75.6" height="15.0" fill="rgb(252,93,54)" rx="2" ry="2" />
+<text text-anchor="" x="1049.04" y="335.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Network...</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.HTTP.Client.TLS.mkManagerSettingsContext (1 samples, 0.10%)</title><rect x="13.5" y="741" width="1.2" height="15.0" fill="rgb(252,123,39)" rx="2" ry="2" />
+<text text-anchor="" x="16.54" y="751.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Data.Aeson.Encoding.Internal.value (1 samples, 0.10%)</title><rect x="1119.2" y="165" width="1.2" height="15.0" fill="rgb(240,190,37)" rx="2" ry="2" />
+<text text-anchor="" x="1122.20" y="175.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Wai.Handler.Warp.Response.sendResponse (3 samples, 0.30%)</title><rect x="1024.8" y="133" width="3.5" height="15.0" fill="rgb(232,21,48)" rx="2" ry="2" />
+<text text-anchor="" x="1027.80" y="143.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.HTTP.Client.Core.httpRedirect' (3 samples, 0.30%)</title><rect x="1141.6" y="485" width="3.6" height="15.0" fill="rgb(244,219,2)" rx="2" ry="2" />
+<text text-anchor="" x="1144.62" y="495.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Main.main (959 samples, 95.90%)</title><rect x="13.5" y="917" width="1131.7" height="15.0" fill="rgb(235,167,19)" rx="2" ry="2" />
+<text text-anchor="" x="16.54" y="927.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Main.main</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Database.Redis.ConnectionContext.ioErrorToConnLost (4 samples, 0.40%)</title><rect x="1034.2" y="85" width="4.8" height="15.0" fill="rgb(229,7,35)" rx="2" ry="2" />
+<text text-anchor="" x="1037.24" y="95.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Gundeck.Run.mkApp.runGundeckWithRoutes (54 samples, 5.40%)</title><rect x="908.0" y="405" width="63.7" height="15.0" fill="rgb(213,152,3)" rx="2" ry="2" />
+<text text-anchor="" x="910.98" y="415.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Gundeck..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Data.HashMap.Internal.insert (1 samples, 0.10%)</title><rect x="917.4" y="325" width="1.2" height="15.0" fill="rgb(251,39,19)" rx="2" ry="2" />
+<text text-anchor="" x="920.42" y="335.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Gundeck.Run.run.middleware (183 samples, 18.30%)</title><rect x="905.6" y="517" width="216.0" height="15.0" fill="rgb(206,186,20)" rx="2" ry="2" />
+<text text-anchor="" x="908.62" y="527.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Gundeck.Run.run.middleware</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Amazonka.Sign.V4.Base.credentialScope (1 samples, 0.10%)</title><rect x="1136.9" y="533" width="1.2" height="15.0" fill="rgb(214,99,42)" rx="2" ry="2" />
+<text text-anchor="" x="1139.90" y="543.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Database.Redis.ConnectionContext.recv (1 samples, 0.10%)</title><rect x="1096.8" y="117" width="1.2" height="15.0" fill="rgb(205,221,42)" rx="2" ry="2" />
+<text text-anchor="" x="1099.78" y="127.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Wai.Routing.Route.addRoute (48 samples, 4.80%)</title><rect x="971.7" y="213" width="56.6" height="15.0" fill="rgb(224,160,26)" rx="2" ry="2" />
+<text text-anchor="" x="974.70" y="223.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Netwo..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Data.Pool.takeResource (21 samples, 2.10%)</title><rect x="72.5" y="629" width="24.8" height="15.0" fill="rgb(220,207,30)" rx="2" ry="2" />
+<text text-anchor="" x="75.54" y="639.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >D..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.HTTP.Client.Request.requestBuilder (3 samples, 0.30%)</title><rect x="1141.6" y="453" width="3.6" height="15.0" fill="rgb(231,32,40)" rx="2" ry="2" />
+<text text-anchor="" x="1144.62" y="463.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>System.Logger.Extended.mkLogger (5 samples, 0.50%)</title><rect x="100.9" y="629" width="5.9" height="15.0" fill="rgb(250,166,45)" rx="2" ry="2" />
+<text text-anchor="" x="103.86" y="639.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Data.Schema..= (1 samples, 0.10%)</title><rect x="1092.1" y="101" width="1.1" height="15.0" fill="rgb(219,193,15)" rx="2" ry="2" />
+<text text-anchor="" x="1095.06" y="111.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Data.Aeson.Types.FromJSON.explicitParseField (33 samples, 3.30%)</title><rect x="1054.3" y="149" width="38.9" height="15.0" fill="rgb(237,201,50)" rx="2" ry="2" />
+<text text-anchor="" x="1057.30" y="159.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Dat..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>System.X509.Unix.getSystemCertificateStore (1 samples, 0.10%)</title><rect x="14.7" y="709" width="1.2" height="15.0" fill="rgb(239,46,21)" rx="2" ry="2" />
+<text text-anchor="" x="17.72" y="719.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Wai.responseToStream (33 samples, 3.30%)</title><rect x="989.4" y="149" width="38.9" height="15.0" fill="rgb(233,56,45)" rx="2" ry="2" />
+<text text-anchor="" x="992.40" y="159.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Net..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Gundeck.Redis.connectRobust.retry (671 samples, 67.10%)</title><rect x="111.5" y="549" width="791.8" height="15.0" fill="rgb(245,222,40)" rx="2" ry="2" />
+<text text-anchor="" x="114.48" y="559.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Gundeck.Redis.connectRobust.retry</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>System.X509.Unix.getSystemCertificateStore (1 samples, 0.10%)</title><rect x="13.5" y="709" width="1.2" height="15.0" fill="rgb(226,109,22)" rx="2" ry="2" />
+<text text-anchor="" x="16.54" y="719.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Wai.Handler.Warp.HTTP1.http1 (856 samples, 85.60%)</title><rect x="111.5" y="597" width="1010.1" height="15.0" fill="rgb(250,167,34)" rx="2" ry="2" />
+<text text-anchor="" x="114.48" y="607.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Network.Wai.Handler.Warp.HTTP1.http1</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Wai.Utilities.Server.compile (3 samples, 0.30%)</title><rect x="968.2" y="341" width="3.5" height="15.0" fill="rgb(236,215,6)" rx="2" ry="2" />
+<text text-anchor="" x="971.16" y="351.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>UnliftIO.Exception.catch (19 samples, 1.90%)</title><rect x="1122.7" y="741" width="22.5" height="15.0" fill="rgb(240,12,21)" rx="2" ry="2" />
+<text text-anchor="" x="1125.74" y="751.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >U..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Gundeck.Redis.connectRobust (78 samples, 7.80%)</title><rect x="15.9" y="837" width="92.0" height="15.0" fill="rgb(208,90,22)" rx="2" ry="2" />
+<text text-anchor="" x="18.90" y="847.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Gundeck.Re..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Amazonka.HTTP.retryRequest (1 samples, 0.10%)</title><rect x="1121.6" y="789" width="1.1" height="15.0" fill="rgb(229,64,36)" rx="2" ry="2" />
+<text text-anchor="" x="1124.56" y="799.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Data.Aeson.encode (3 samples, 0.30%)</title><rect x="1040.1" y="165" width="3.6" height="15.0" fill="rgb(214,24,1)" rx="2" ry="2" />
+<text text-anchor="" x="1043.14" y="175.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Gundeck.Presence.Data.parseJSON.\ (16 samples, 1.60%)</title><rect x="1099.1" y="133" width="18.9" height="15.0" fill="rgb(231,24,3)" rx="2" ry="2" />
+<text text-anchor="" x="1102.14" y="143.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Database.Redis.Cluster.requestPipelined (10 samples, 1.00%)</title><rect x="1028.3" y="133" width="11.8" height="15.0" fill="rgb(241,150,16)" rx="2" ry="2" />
+<text text-anchor="" x="1031.34" y="143.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Servant.Server.serve (127 samples, 12.70%)</title><rect x="971.7" y="405" width="149.9" height="15.0" fill="rgb(254,28,41)" rx="2" ry="2" />
+<text text-anchor="" x="974.70" y="415.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Servant.Server.serve</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Gundeck.Redis.HedisExtensions.checkedConnectCluster (70 samples, 7.00%)</title><rect x="15.9" y="693" width="82.6" height="15.0" fill="rgb(216,109,39)" rx="2" ry="2" />
+<text text-anchor="" x="18.90" y="703.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Gundeck.R..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Wai.Route.Tree.value (3 samples, 0.30%)</title><rect x="968.2" y="357" width="3.5" height="15.0" fill="rgb(208,98,38)" rx="2" ry="2" />
+<text text-anchor="" x="971.16" y="367.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>all (1,000 samples, 100%)</title><rect x="10.0" y="949" width="1180.0" height="15.0" fill="rgb(245,220,2)" rx="2" ry="2" />
+<text text-anchor="" x="13.00" y="959.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Control.Monad.Trans.Resource.allocate (3 samples, 0.30%)</title><rect x="1141.6" y="581" width="3.6" height="15.0" fill="rgb(243,86,4)" rx="2" ry="2" />
+<text text-anchor="" x="1144.62" y="591.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Data.Pool.createPool (2 samples, 0.20%)</title><rect x="15.9" y="661" width="2.4" height="15.0" fill="rgb(254,36,5)" rx="2" ry="2" />
+<text text-anchor="" x="18.90" y="671.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Socket.Types.invalidateSocket (31 samples, 3.10%)</title><rect x="862.0" y="405" width="36.5" height="15.0" fill="rgb(212,214,4)" rx="2" ry="2" />
+<text text-anchor="" x="864.96" y="415.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Net..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Gundeck.Env.createRedisPool (78 samples, 7.80%)</title><rect x="15.9" y="869" width="92.0" height="15.0" fill="rgb(228,108,46)" rx="2" ry="2" />
+<text text-anchor="" x="18.90" y="879.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Gundeck.En..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Wai.Utilities.Server.compile (48 samples, 4.80%)</title><rect x="971.7" y="261" width="56.6" height="15.0" fill="rgb(248,188,26)" rx="2" ry="2" />
+<text text-anchor="" x="974.70" y="271.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Netwo..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Gundeck.Presence.Data.list' (1 samples, 0.10%)</title><rect x="970.5" y="245" width="1.2" height="15.0" fill="rgb(222,196,36)" rx="2" ry="2" />
+<text text-anchor="" x="973.52" y="255.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Gundeck.Redis.HedisExtensions.clusterInfo (1 samples, 0.10%)</title><rect x="97.3" y="613" width="1.2" height="15.0" fill="rgb(240,151,32)" rx="2" ry="2" />
+<text text-anchor="" x="100.32" y="623.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Wai.Handler.Warp.Run.runSettingsConnectionMaker (857 samples, 85.70%)</title><rect x="110.3" y="805" width="1011.3" height="15.0" fill="rgb(206,146,41)" rx="2" ry="2" />
+<text text-anchor="" x="113.30" y="815.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Network.Wai.Handler.Warp.Run.runSettingsConnectionMaker</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Socket.SockAddr.connect (1 samples, 0.10%)</title><rect x="902.1" y="421" width="1.2" height="15.0" fill="rgb(207,111,51)" rx="2" ry="2" />
+<text text-anchor="" x="905.08" y="431.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Gundeck.Presence.Data.add (10 samples, 1.00%)</title><rect x="1028.3" y="181" width="11.8" height="15.0" fill="rgb(223,16,15)" rx="2" ry="2" />
+<text text-anchor="" x="1031.34" y="191.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Wai.Utilities.Server.compile (51 samples, 5.10%)</title><rect x="908.0" y="389" width="60.2" height="15.0" fill="rgb(248,169,39)" rx="2" ry="2" />
+<text text-anchor="" x="910.98" y="399.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Networ..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Data.X509.CertificateStore.readCertificateStore (1 samples, 0.10%)</title><rect x="13.5" y="693" width="1.2" height="15.0" fill="rgb(235,70,29)" rx="2" ry="2" />
+<text text-anchor="" x="16.54" y="703.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Data.Aeson.Encoding.Builder.object (1 samples, 0.10%)</title><rect x="1119.2" y="133" width="1.2" height="15.0" fill="rgb(217,158,30)" rx="2" ry="2" />
+<text text-anchor="" x="1122.20" y="143.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Database.Redis.Connection.runRedis (22 samples, 2.20%)</title><rect x="72.5" y="677" width="26.0" height="15.0" fill="rgb(211,16,51)" rx="2" ry="2" />
+<text text-anchor="" x="75.54" y="687.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >D..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.HTTP.Client.Manager.newManager (3 samples, 0.30%)</title><rect x="1141.6" y="517" width="3.6" height="15.0" fill="rgb(214,103,20)" rx="2" ry="2" />
+<text text-anchor="" x="1144.62" y="527.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Data.X509.CertificateStore.readCertificateStore (1 samples, 0.10%)</title><rect x="14.7" y="693" width="1.2" height="15.0" fill="rgb(213,61,6)" rx="2" ry="2" />
+<text text-anchor="" x="17.72" y="703.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Crypto.MAC.HMAC.initialize (1 samples, 0.10%)</title><rect x="1138.1" y="485" width="1.2" height="15.0" fill="rgb(220,219,20)" rx="2" ry="2" />
+<text text-anchor="" x="1141.08" y="495.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.HTTP.Client.Manager.newManager (2 samples, 0.20%)</title><rect x="13.5" y="805" width="2.4" height="15.0" fill="rgb(232,76,29)" rx="2" ry="2" />
+<text text-anchor="" x="16.54" y="815.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Wai.Utilities.Server.route (64 samples, 6.40%)</title><rect x="1046.0" y="341" width="75.6" height="15.0" fill="rgb(211,10,54)" rx="2" ry="2" />
+<text text-anchor="" x="1049.04" y="351.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Network...</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Wai.Predicate.Utility.readValues (2 samples, 0.20%)</title><rect x="968.2" y="261" width="2.3" height="15.0" fill="rgb(227,227,46)" rx="2" ry="2" />
+<text text-anchor="" x="971.16" y="271.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.HTTP.Client.Types.managerTlsProxyConnection (1 samples, 0.10%)</title><rect x="109.1" y="853" width="1.2" height="15.0" fill="rgb(218,10,32)" rx="2" ry="2" />
+<text text-anchor="" x="112.12" y="863.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Text.XML.parseLBS (8 samples, 0.80%)</title><rect x="1122.7" y="549" width="9.5" height="15.0" fill="rgb(223,215,47)" rx="2" ry="2" />
+<text text-anchor="" x="1125.74" y="559.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Data.HashMap.Internal.unsafeInsert (7 samples, 0.70%)</title><rect x="128.0" y="405" width="8.3" height="15.0" fill="rgb(235,176,39)" rx="2" ry="2" />
+<text text-anchor="" x="131.00" y="415.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Wai.Routing.Route.addRoute (15 samples, 1.50%)</title><rect x="1028.3" y="229" width="17.7" height="15.0" fill="rgb(238,189,19)" rx="2" ry="2" />
+<text text-anchor="" x="1031.34" y="239.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Data.Pool.withResource (22 samples, 2.20%)</title><rect x="72.5" y="661" width="26.0" height="15.0" fill="rgb(216,214,51)" rx="2" ry="2" />
+<text text-anchor="" x="75.54" y="671.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >D..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Data.Aeson.Types.FromJSON.ifromJSON (34 samples, 3.40%)</title><rect x="1053.1" y="197" width="40.1" height="15.0" fill="rgb(239,14,40)" rx="2" ry="2" />
+<text text-anchor="" x="1056.12" y="207.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Dat..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Data.Metrics.Types.treeLookup (2 samples, 0.20%)</title><rect x="905.6" y="453" width="2.4" height="15.0" fill="rgb(235,22,48)" rx="2" ry="2" />
+<text text-anchor="" x="908.62" y="463.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Gundeck.Aws.sendCatch (19 samples, 1.90%)</title><rect x="1122.7" y="693" width="22.5" height="15.0" fill="rgb(233,178,29)" rx="2" ry="2" />
+<text text-anchor="" x="1125.74" y="703.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >G..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Wai.Route.Tree.value (48 samples, 4.80%)</title><rect x="971.7" y="277" width="56.6" height="15.0" fill="rgb(217,155,11)" rx="2" ry="2" />
+<text text-anchor="" x="974.70" y="287.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Netwo..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Data.Metrics.Middleware.Prometheus.normalizeWaiRequestRoute.mPathInfo (2 samples, 0.20%)</title><rect x="905.6" y="469" width="2.4" height="15.0" fill="rgb(249,19,26)" rx="2" ry="2" />
+<text text-anchor="" x="908.62" y="479.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Database.Redis.Cluster.Command.newInfoMap (21 samples, 2.10%)</title><rect x="111.5" y="437" width="24.8" height="15.0" fill="rgb(246,157,44)" rx="2" ry="2" />
+<text text-anchor="" x="114.48" y="447.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >D..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Gundeck.API.Internal.sitemap (15 samples, 1.50%)</title><rect x="1028.3" y="245" width="17.7" height="15.0" fill="rgb(236,110,30)" rx="2" ry="2" />
+<text text-anchor="" x="1031.34" y="255.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Data.Aeson.Encoding.Builder.encodeToBuilder (1 samples, 0.10%)</title><rect x="1041.3" y="133" width="1.2" height="15.0" fill="rgb(248,88,3)" rx="2" ry="2" />
+<text text-anchor="" x="1044.32" y="143.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Data.Conduit.Internal.Conduit.fuse (7 samples, 0.70%)</title><rect x="1122.7" y="485" width="8.3" height="15.0" fill="rgb(223,195,13)" rx="2" ry="2" />
+<text text-anchor="" x="1125.74" y="495.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.URI.parseURI (15 samples, 1.50%)</title><rect x="1100.3" y="53" width="17.7" height="15.0" fill="rgb(228,121,14)" rx="2" ry="2" />
+<text text-anchor="" x="1103.32" y="63.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>UnliftIO.Exception.tryAny (183 samples, 18.30%)</title><rect x="905.6" y="549" width="216.0" height="15.0" fill="rgb(209,58,12)" rx="2" ry="2" />
+<text text-anchor="" x="908.62" y="559.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >UnliftIO.Exception.tryAny</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Control.Monad.Trans.Control.control (22 samples, 2.20%)</title><rect x="72.5" y="645" width="26.0" height="15.0" fill="rgb(206,63,41)" rx="2" ry="2" />
+<text text-anchor="" x="75.54" y="655.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >C..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Amazonka.Env.newEnv (2 samples, 0.20%)</title><rect x="13.5" y="837" width="2.4" height="15.0" fill="rgb(219,91,11)" rx="2" ry="2" />
+<text text-anchor="" x="16.54" y="847.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.HTTP.Client.Types.managerTlsConnection (1 samples, 0.10%)</title><rect x="107.9" y="853" width="1.2" height="15.0" fill="rgb(224,146,9)" rx="2" ry="2" />
+<text text-anchor="" x="110.94" y="863.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Data.Metrics.Middleware.Prometheus.waiPrometheusMiddleware.instrument (181 samples, 18.10%)</title><rect x="908.0" y="485" width="213.6" height="15.0" fill="rgb(223,57,5)" rx="2" ry="2" />
+<text text-anchor="" x="910.98" y="495.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Data.Metrics.Middleware.Prom..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Wai.Handler.Warp.Request.recvRequest (2 samples, 0.20%)</title><rect x="903.3" y="549" width="2.3" height="15.0" fill="rgb(249,214,13)" rx="2" ry="2" />
+<text text-anchor="" x="906.26" y="559.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Socket.SockAddr.connect (1 samples, 0.10%)</title><rect x="1121.6" y="597" width="1.1" height="15.0" fill="rgb(236,67,22)" rx="2" ry="2" />
+<text text-anchor="" x="1124.56" y="607.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Gundeck.Presence.Data.toKey (1 samples, 0.10%)</title><rect x="970.5" y="229" width="1.2" height="15.0" fill="rgb(213,139,36)" rx="2" ry="2" />
+<text text-anchor="" x="973.52" y="239.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Data.X509.CertificateStore.readCertificates (1 samples, 0.10%)</title><rect x="14.7" y="677" width="1.2" height="15.0" fill="rgb(224,226,30)" rx="2" ry="2" />
+<text text-anchor="" x="17.72" y="687.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Data.X509.CertificateStore.readCertificates (1 samples, 0.10%)</title><rect x="109.1" y="741" width="1.2" height="15.0" fill="rgb(229,219,15)" rx="2" ry="2" />
+<text text-anchor="" x="112.12" y="751.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Gundeck.API.Internal.sitemap (3 samples, 0.30%)</title><rect x="968.2" y="309" width="3.5" height="15.0" fill="rgb(237,86,6)" rx="2" ry="2" />
+<text text-anchor="" x="971.16" y="319.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.HTTP.Client.Core.httpRaw' (3 samples, 0.30%)</title><rect x="1141.6" y="469" width="3.6" height="15.0" fill="rgb(205,60,3)" rx="2" ry="2" />
+<text text-anchor="" x="1144.62" y="479.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.HTTP.Client.TLS.mkManagerSettingsContext (1 samples, 0.10%)</title><rect x="107.9" y="805" width="1.2" height="15.0" fill="rgb(248,214,43)" rx="2" ry="2" />
+<text text-anchor="" x="110.94" y="815.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Amazonka.Send.send (19 samples, 1.90%)</title><rect x="1122.7" y="677" width="22.5" height="15.0" fill="rgb(218,24,19)" rx="2" ry="2" />
+<text text-anchor="" x="1125.74" y="687.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >A..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Data.Streaming.Zlib.initDeflate (15 samples, 1.50%)</title><rect x="971.7" y="149" width="17.7" height="15.0" fill="rgb(233,210,28)" rx="2" ry="2" />
+<text text-anchor="" x="974.70" y="159.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Data.Metrics.Types.treeLookup.mungeSegments (1 samples, 0.10%)</title><rect x="906.8" y="437" width="1.2" height="15.0" fill="rgb(206,126,33)" rx="2" ry="2" />
+<text text-anchor="" x="909.80" y="447.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Control.Monad.Trans.Resource.allocate (1 samples, 0.10%)</title><rect x="1121.6" y="725" width="1.1" height="15.0" fill="rgb(223,209,23)" rx="2" ry="2" />
+<text text-anchor="" x="1124.56" y="735.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Amazonka.Sign.V4.Base.stringToSign (2 samples, 0.20%)</title><rect x="1139.3" y="533" width="2.3" height="15.0" fill="rgb(227,14,23)" rx="2" ry="2" />
+<text text-anchor="" x="1142.26" y="543.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Text.XML.Unresolved.elementFromEvents (1 samples, 0.10%)</title><rect x="1131.0" y="485" width="1.2" height="15.0" fill="rgb(205,28,30)" rx="2" ry="2" />
+<text text-anchor="" x="1134.00" y="495.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Socket.Types.withFdSocket (1 samples, 0.10%)</title><rect x="1121.6" y="533" width="1.1" height="15.0" fill="rgb(220,64,0)" rx="2" ry="2" />
+<text text-anchor="" x="1124.56" y="543.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Network.Wai.Handler.Warp.Run.fork (857 samples, 85.70%)</title><rect x="110.3" y="677" width="1011.3" height="15.0" fill="rgb(239,153,0)" rx="2" ry="2" />
+<text text-anchor="" x="113.30" y="687.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Network.Wai.Handler.Warp.Run.fork</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Gundeck.Presence.Data.toKey (2 samples, 0.20%)</title><rect x="1043.7" y="165" width="2.3" height="15.0" fill="rgb(250,211,26)" rx="2" ry="2" />
+<text text-anchor="" x="1046.68" y="175.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+</svg>
